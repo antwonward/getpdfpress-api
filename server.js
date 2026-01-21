@@ -526,7 +526,7 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
     const command =
       `libreoffice --headless --nologo --nofirststartwizard --norestore ` +
       `-env:UserInstallation=${LO_PROFILE} ` +
-      `--convert-to docx:"MS Word 2007 XML" ` +
+      `--convert-to docx ` +
       `--outdir "${tempOutputDir}" "${inputPath}"`;
 
     console.log(`📝 Running command: ${command}`);

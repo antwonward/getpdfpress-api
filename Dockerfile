@@ -32,11 +32,16 @@ RUN npm install --omit=dev
 COPY . .
 
 # Create necessary directories with proper permissions
-RUN mkdir -p uploads output /tmp/lo-profile && \
-    chmod 777 uploads output /tmp/lo-profile && \
+RUN mkdir -p uploads output /tmp/lo-profile /tmp/lo-init && \
+    chmod 777 uploads output /tmp/lo-profile /tmp/lo-init && \
+    echo "Test" > /tmp/lo-init/test.txt && \
     libreoffice --headless --nofirststartwizard --nologo \
       -env:UserInstallation=file:///tmp/lo-profile \
-      --convert-to pdf /dev/null 2>/dev/null || true
+      --convert-to pdf /tmp/lo-init/test.txt --outdir /tmp/lo-init 2>/dev/null || true && \
+    libreoffice --headless --nofirststartwizard --nologo \
+      -env:UserInstallation=file:///tmp/lo-profile \
+      --convert-to docx /tmp/lo-init/test.txt --outdir /tmp/lo-init 2>/dev/null || true && \
+    rm -rf /tmp/lo-init
 
 # Expose port (Render will use PORT env var)
 EXPOSE 10000
