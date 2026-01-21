@@ -1,34 +1,46 @@
-# Dockerfile - Complete with Ghostscript + LibreOffice
-# This enables ALL 8 PDF tools!
+# Dockerfile - Complete with Ghostscript + LibreOffice + GraphicsMagick
+# Optimized for Render.com deployment
 
 FROM node:18-slim
 
-# Install Ghostscript (for compression) AND LibreOffice (for Word conversion)
+# Install all required system dependencies
+# - Ghostscript: PDF compression
+# - LibreOffice: PDF ↔ Word conversion
+# - GraphicsMagick: PDF to JPG conversion
+# - Fonts: Better document rendering
 RUN apt-get update && \
     apt-get install -y \
     ghostscript \
     libreoffice \
     libreoffice-writer \
+    graphicsmagick \
+    fonts-liberation \
+    fonts-dejavu \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
 WORKDIR /app
 
-# Copy package files
+# Copy package files first (better layer caching)
 COPY package*.json ./
 
 # Install Node dependencies
-RUN npm install --production
+RUN npm ci --only=production
 
 # Copy application code
 COPY . .
 
-# Create necessary directories
-RUN mkdir -p uploads output
+# Create necessary directories with proper permissions
+RUN mkdir -p uploads output && \
+    chmod 755 uploads output
 
-# Expose port
-EXPOSE 3000
+# Expose port (Render will use PORT env var)
+EXPOSE 10000
 
-# Start application
-CMD ["npm", "start"]
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:' + (process.env.PORT || 3000) + '/api/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+
+# Run node directly (better signal handling than npm)
+CMD ["node", "server.js"]

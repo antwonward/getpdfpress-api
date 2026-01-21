@@ -727,7 +727,7 @@ app.use((err, req, res, next) => {
 // ============================================
 // START SERVER
 // ============================================
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   const hasGs = await isGhostscriptAvailable();
   const hasLibre = await checkLibreOffice();
   console.log(`🚀 getPDFpress API running on port ${PORT}`);
@@ -745,3 +745,41 @@ app.listen(PORT, async () => {
     console.log("⚠️  Install LibreOffice for PDF↔Word conversion!");
   }
 });
+
+// ============================================
+// GRACEFUL SHUTDOWN
+// ============================================
+// Handle shutdown signals gracefully (important for Render.com)
+process.on('SIGTERM', () => {
+  console.log('📴 SIGTERM received, shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ Server closed successfully');
+    process.exit(0);
+  });
+  
+  // Force shutdown after 10 seconds if graceful shutdown hangs
+  setTimeout(() => {
+    console.error('⚠️  Forced shutdown after timeout');
+    process.exit(1);
+  }, 10000);
+});
+
+process.on('SIGINT', () => {
+  console.log('📴 SIGINT received, shutting down gracefully...');
+  server.close(() => {
+    console.log('✅ Server closed successfully');
+    process.exit(0);
+  });
+});
+
+// Handle uncaught errors
+process.on('uncaughtException', (err) => {
+  console.error('❌ Uncaught Exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+  process.exit(1);
+});
+
