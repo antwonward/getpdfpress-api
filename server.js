@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 3000;
 // Configure file upload (10MB limit)
 const upload = multer({
   dest: 'uploads/',
-  limits: { fileSize: 10 * 1024 * 1024 }
+  limits: { fileSize: 50 * 1024 * 1024 }
 });
 
 app.use(cors());
