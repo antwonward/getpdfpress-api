@@ -117,7 +117,7 @@ async function checkLibreOffice() {
 // ============================================
 // HELPER: Compress with Ghostscript (REAL compression!)
 // ============================================
-async function compressWithGhostscript(inputPath, outputPath, targetSizeKB) {
+async function compressWithGhostscript(inputPath, outputPath, targetSizeKB, compressionLevel = 'balanced') {
   const hasGs = await isGhostscriptAvailable();
 
   if (!hasGs) {
@@ -125,22 +125,32 @@ async function compressWithGhostscript(inputPath, outputPath, targetSizeKB) {
     return compressWithPdfLib(inputPath, outputPath);
   }
 
-  console.log("🔧 Using Ghostscript for compression");
+  console.log(`🔧 Using Ghostscript for compression (level: ${compressionLevel})`);
 
-  // Determine compression quality based on target size
+  // Determine compression quality based on compression level and target size
   let quality;
-  if (targetSizeKB <= 200) {
-    quality = "/screen"; // Lowest quality, smallest size (~72 DPI)
-  } else if (targetSizeKB <= 500) {
-    quality = "/ebook"; // Medium quality (~150 DPI)
+  
+  if (compressionLevel === 'gentle') {
+    // Gentle: Best quality, may exceed target size
+    quality = "/printer"; // ~300 DPI
+  } else if (compressionLevel === 'strong') {
+    // Strong: Maximum compression, smallest file
+    quality = "/screen"; // ~72 DPI
   } else {
-    quality = "/printer"; // Higher quality (~300 DPI)
+    // Balanced (default): Use target size to determine quality
+    if (targetSizeKB <= 200) {
+      quality = "/screen"; // Lowest quality for smallest target
+    } else if (targetSizeKB <= 500) {
+      quality = "/ebook"; // Medium quality
+    } else {
+      quality = "/printer"; // Higher quality for larger target
+    }
   }
 
   const command = `gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=${quality} -dNOPAUSE -dQUIET -dBATCH -dDetectDuplicateImages=true -dCompressFonts=true -sOutputFile="${outputPath}" "${inputPath}"`;
 
   try {
-    console.log("📄 Executing Ghostscript compression...");
+    console.log(`📄 Executing Ghostscript compression with ${quality}...`);
     await execPromise(command);
     console.log("✅ Ghostscript compression complete");
     return true;
@@ -189,7 +199,7 @@ app.post("/api/compress", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    const { targetSize } = req.body; // "500" or "200" in KB
+    const { targetSize, compressionLevel = 'balanced' } = req.body; // "500" or "200" in KB, and compression level
     inputPath = req.file.path;
     outputPath = path.join(outputDir, `compressed-${Date.now()}.pdf`);
     const targetSizeKB = parseInt(targetSize);
@@ -198,9 +208,10 @@ app.post("/api/compress", upload.single("file"), async (req, res) => {
       `📄 Processing: ${req.file.originalname} (${req.file.size} bytes)`,
     );
     console.log(`🎯 Target size: ${targetSize}KB`);
+    console.log(`⚙️ Compression level: ${compressionLevel}`);
 
     // Use Ghostscript for real compression
-    await compressWithGhostscript(inputPath, outputPath, targetSizeKB);
+    await compressWithGhostscript(inputPath, outputPath, targetSizeKB, compressionLevel);
 
     // Read the compressed file
     const compressedBytes = await fs.readFile(outputPath);
