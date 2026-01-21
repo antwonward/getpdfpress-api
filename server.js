@@ -1,4 +1,4 @@
-// server.js - UPGRADED with REAL PDF Compression
+// server.js - UPGRADED with REAL PDF Compression + PROPER ERROR HANDLING
 // This version uses Ghostscript for actual file size reduction
 
 const express = require("express");
@@ -71,9 +71,21 @@ app.use(express.static("public"));
 async function safeUnlink(filePath) {
   if (!filePath) return;
   try {
-    await fs.unlink(filePath); // ✅ this is the real delete
+    await fs.unlink(filePath);
   } catch (_) {
     // ignore: file may already be deleted / missing / locked
+  }
+}
+
+// ============================================
+// HELPER: Safe directory cleanup (never throws)
+// ============================================
+async function safeRmdir(dirPath) {
+  if (!dirPath) return;
+  try {
+    await fs.rm(dirPath, { recursive: true, force: true });
+  } catch (_) {
+    // ignore: directory may already be deleted / missing
   }
 }
 
@@ -169,6 +181,8 @@ async function compressWithPdfLib(inputPath, outputPath) {
 // ============================================
 app.post("/api/compress", upload.single("file"), async (req, res) => {
   console.log("📥 Compress request received");
+  let inputPath, outputPath;
+
   try {
     if (!req.file) {
       console.log("❌ No file uploaded");
@@ -176,8 +190,8 @@ app.post("/api/compress", upload.single("file"), async (req, res) => {
     }
 
     const { targetSize } = req.body; // "500" or "200" in KB
-    const inputPath = req.file.path;
-    const outputPath = path.join(outputDir, `compressed-${Date.now()}.pdf`);
+    inputPath = req.file.path;
+    outputPath = path.join(outputDir, `compressed-${Date.now()}.pdf`);
     const targetSizeKB = parseInt(targetSize);
 
     console.log(
@@ -194,10 +208,6 @@ app.post("/api/compress", upload.single("file"), async (req, res) => {
       `✅ Compressed: ${compressedBytes.length} bytes (${Math.round((1 - compressedBytes.length / req.file.size) * 100)}% reduction)`,
     );
 
-    // Clean up
-    await safeUnlink(inputPath);
-    await safeUnlink(outputPath);
-
     res.set({
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="compressed-${req.file.originalname}"`,
@@ -213,6 +223,10 @@ app.post("/api/compress", upload.single("file"), async (req, res) => {
       details: error.message,
       stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
     });
+  } finally {
+    // ✅ GUARANTEED cleanup - runs even if error occurs
+    await safeUnlink(inputPath);
+    await safeUnlink(outputPath);
   }
 });
 
@@ -220,6 +234,8 @@ app.post("/api/compress", upload.single("file"), async (req, res) => {
 // TOOL 3: MERGE PDFs
 // ============================================
 app.post("/api/merge", upload.array("files", 10), async (req, res) => {
+  const filePaths = req.files ? req.files.map((f) => f.path) : [];
+
   try {
     const mergedPdf = await PDFDocument.create();
 
@@ -229,7 +245,6 @@ app.post("/api/merge", upload.array("files", 10), async (req, res) => {
       const pdf = await PDFDocument.load(pdfBytes);
       const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
       pages.forEach((page) => mergedPdf.addPage(page));
-      await safeUnlink(file.path); // Clean up
     }
 
     const mergedBytes = await mergedPdf.save();
@@ -244,6 +259,11 @@ app.post("/api/merge", upload.array("files", 10), async (req, res) => {
   } catch (error) {
     console.error("Merge error:", error);
     res.status(500).json({ error: "Merge failed" });
+  } finally {
+    // ✅ GUARANTEED cleanup - clean up all uploaded files
+    for (const filePath of filePaths) {
+      await safeUnlink(filePath);
+    }
   }
 });
 
@@ -251,9 +271,11 @@ app.post("/api/merge", upload.array("files", 10), async (req, res) => {
 // TOOL 4: SPLIT PDF
 // ============================================
 app.post("/api/split", upload.single("file"), async (req, res) => {
+  let inputPath;
+
   try {
     const { pages } = req.body; // e.g., "1-3,5,7-9" or "all"
-    const inputPath = req.file.path;
+    inputPath = req.file.path;
 
     const pdfBytes = await fs.readFile(inputPath);
     const pdfDoc = await PDFDocument.load(pdfBytes);
@@ -273,8 +295,6 @@ app.post("/api/split", upload.single("file"), async (req, res) => {
       });
     }
 
-    await safeUnlink(inputPath);
-
     res.json({
       success: true,
       files: splitPdfs,
@@ -282,6 +302,9 @@ app.post("/api/split", upload.single("file"), async (req, res) => {
   } catch (error) {
     console.error("Split error:", error);
     res.status(500).json({ error: "Split failed" });
+  } finally {
+    // ✅ GUARANTEED cleanup
+    await safeUnlink(inputPath);
   }
 });
 
@@ -289,6 +312,8 @@ app.post("/api/split", upload.single("file"), async (req, res) => {
 // TOOL 5: JPG to PDF
 // ============================================
 app.post("/api/jpg-to-pdf", upload.array("files", 20), async (req, res) => {
+  const filePaths = req.files ? req.files.map((f) => f.path) : [];
+
   try {
     const pdfDoc = await PDFDocument.create();
 
@@ -309,8 +334,6 @@ app.post("/api/jpg-to-pdf", upload.array("files", 20), async (req, res) => {
         width: jpgImage.width,
         height: jpgImage.height,
       });
-
-      await safeUnlink(file.path); // Clean up
     }
 
     const pdfBytes = await pdfDoc.save();
@@ -325,20 +348,31 @@ app.post("/api/jpg-to-pdf", upload.array("files", 20), async (req, res) => {
   } catch (error) {
     console.error("JPG to PDF error:", error);
     res.status(500).json({ error: "Conversion failed" });
+  } finally {
+    // ✅ GUARANTEED cleanup - clean up all uploaded images
+    for (const filePath of filePaths) {
+      await safeUnlink(filePath);
+    }
   }
 });
 
 // ============================================
-// TOOL 6: PDF to JPG
+// TOOL 6: PDF to JPG (FIXED - no file leaks!)
 // ============================================
 app.post("/api/pdf-to-jpg", upload.single("file"), async (req, res) => {
+  let inputPath, tempDir;
+
   try {
-    const inputPath = req.file.path;
+    inputPath = req.file.path;
+
+    // ✅ Create a unique temp directory for this request
+    tempDir = path.join(outputDir, `pdf2jpg-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    await fs.mkdir(tempDir, { recursive: true });
 
     const options = {
       density: 200,
       saveFilename: "page",
-      savePath: outputDir,
+      savePath: tempDir, // ✅ Use per-request temp directory
       format: "jpg",
       width: 2000,
       height: 2000,
@@ -356,8 +390,6 @@ app.post("/api/pdf-to-jpg", upload.single("file"), async (req, res) => {
       });
     }
 
-    await safeUnlink(inputPath);
-
     res.json({
       success: true,
       images: images,
@@ -365,6 +397,10 @@ app.post("/api/pdf-to-jpg", upload.single("file"), async (req, res) => {
   } catch (error) {
     console.error("PDF to JPG error:", error);
     res.status(500).json({ error: "Conversion failed" });
+  } finally {
+    // ✅ GUARANTEED cleanup - delete input AND entire temp directory
+    await safeUnlink(inputPath);
+    await safeRmdir(tempDir);
   }
 });
 
@@ -379,9 +415,11 @@ async function getPdfPageCount(filePath) {
 // TOOL 7: PROTECT PDF (Add Password)
 // ============================================
 app.post("/api/protect", upload.single("file"), async (req, res) => {
+  let inputPath;
+
   try {
     const { password } = req.body;
-    const inputPath = req.file.path;
+    inputPath = req.file.path;
 
     const pdfBytes = await fs.readFile(inputPath);
     const pdfDoc = await PDFDocument.load(pdfBytes);
@@ -392,8 +430,6 @@ app.post("/api/protect", upload.single("file"), async (req, res) => {
 
     const protectedBytes = await pdfDoc.save();
 
-    await safeUnlink(inputPath);
-
     res.set({
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="protected-${req.file.originalname}"`,
@@ -403,6 +439,9 @@ app.post("/api/protect", upload.single("file"), async (req, res) => {
   } catch (error) {
     console.error("Protection error:", error);
     res.status(500).json({ error: "Protection failed" });
+  } finally {
+    // ✅ GUARANTEED cleanup
+    await safeUnlink(inputPath);
   }
 });
 
@@ -410,9 +449,11 @@ app.post("/api/protect", upload.single("file"), async (req, res) => {
 // TOOL 8: UNLOCK PDF (Remove Password)
 // ============================================
 app.post("/api/unlock", upload.single("file"), async (req, res) => {
+  let inputPath;
+
   try {
     const { password } = req.body;
-    const inputPath = req.file.path;
+    inputPath = req.file.path;
 
     const pdfBytes = await fs.readFile(inputPath);
 
@@ -423,8 +464,6 @@ app.post("/api/unlock", upload.single("file"), async (req, res) => {
 
     const unlockedBytes = await pdfDoc.save();
 
-    await safeUnlink(inputPath);
-
     res.set({
       "Content-Type": "application/pdf",
       "Content-Disposition": `attachment; filename="unlocked-${req.file.originalname}"`,
@@ -434,6 +473,9 @@ app.post("/api/unlock", upload.single("file"), async (req, res) => {
   } catch (error) {
     console.error("Unlock error:", error);
     res.status(500).json({ error: "Unlock failed - wrong password?" });
+  } finally {
+    // ✅ GUARANTEED cleanup
+    await safeUnlink(inputPath);
   }
 });
 
@@ -442,16 +484,17 @@ app.post("/api/unlock", upload.single("file"), async (req, res) => {
 // ============================================
 app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
   console.log("📥 PDF to Word request received");
+  let inputPath, docxPath;
+
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    const inputPath = req.file.path;
+    inputPath = req.file.path;
     const hasLibreOffice = await checkLibreOffice();
 
     if (!hasLibreOffice) {
-      await safeUnlink(inputPath);
       return res.status(501).json({
         error: "Feature not available",
         message:
@@ -467,44 +510,32 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
       `--convert-to docx:"MS Word 2007 XML" ` +
       `--outdir "${outputDir}" "${inputPath}"`;
 
-    try {
-      await execPromise(command, { timeout: 90000 }); // 90 second timeout
+    await execPromise(command, { timeout: 90000 }); // 90 second timeout
 
-      // Find the output file
-      const files = await fs.readdir(outputDir);
-      const baseName = path.basename(inputPath, path.extname(inputPath));
-      const docxFile = files.find(
-        (f) => f.includes(baseName) && f.endsWith(".docx"),
-      );
+    // Find the output file
+    const files = await fs.readdir(outputDir);
+    const baseName = path.basename(inputPath, path.extname(inputPath));
+    const docxFile = files.find(
+      (f) => f.includes(baseName) && f.endsWith(".docx"),
+    );
 
-      if (!docxFile) {
-        throw new Error("Conversion completed but output file not found");
-      }
-
-      const docxPath = path.join(outputDir, docxFile);
-      const docxBytes = await fs.readFile(docxPath);
-
-      console.log(`✅ Converted to Word: ${docxBytes.length} bytes`);
-
-      // Clean up
-      await safeUnlink(inputPath);
-      await safeUnlink(docxPath);
-
-      res.set({
-        "Content-Type":
-          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-        "Content-Disposition": `attachment; filename="${req.file.originalname.replace(/\.pdf$/i, "")}.docx"`,
-        "Content-Length": docxBytes.length,
-      });
-
-      res.send(docxBytes);
-    } catch (error) {
-      console.error("❌ LibreOffice conversion failed:", error.message);
-      await safeUnlink(inputPath);
-      throw new Error(
-        "Conversion failed. If this is a scanned PDF, OCR is required. Otherwise the file may be malformed.",
-      );
+    if (!docxFile) {
+      throw new Error("Conversion completed but output file not found");
     }
+
+    docxPath = path.join(outputDir, docxFile);
+    const docxBytes = await fs.readFile(docxPath);
+
+    console.log(`✅ Converted to Word: ${docxBytes.length} bytes`);
+
+    res.set({
+      "Content-Type":
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      "Content-Disposition": `attachment; filename="${req.file.originalname.replace(/\.pdf$/i, "")}.docx"`,
+      "Content-Length": docxBytes.length,
+    });
+
+    res.send(docxBytes);
   } catch (error) {
     console.error("❌ PDF to Word error:", error.message);
     res.status(500).json({
@@ -512,6 +543,10 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
       message: error.message,
       suggestion: "Try a text-based PDF (not a scanned document).",
     });
+  } finally {
+    // ✅ GUARANTEED cleanup - runs even if LibreOffice fails
+    await safeUnlink(inputPath);
+    await safeUnlink(docxPath);
   }
 });
 
@@ -520,16 +555,17 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
 // ============================================
 app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
   console.log("📥 Word to PDF request received");
+  let inputPath, pdfPath;
+
   try {
     if (!req.file) {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    const inputPath = req.file.path;
+    inputPath = req.file.path;
     const hasLibreOffice = await checkLibreOffice();
 
     if (!hasLibreOffice) {
-      await safeUnlink(inputPath);
       return res.status(501).json({
         error: "Feature not available",
         message:
@@ -545,49 +581,41 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
       `--convert-to pdf ` +
       `--outdir "${outputDir}" "${inputPath}"`;
 
-    try {
-      await execPromise(command, { timeout: 90000 }); // 90 second timeout
+    await execPromise(command, { timeout: 90000 }); // 90 second timeout
 
-      // Find the output file
-      const files = await fs.readdir(outputDir);
-      const baseName = path.basename(inputPath, path.extname(inputPath));
-      const pdfFile = files.find(
-        (f) => f.includes(baseName) && f.endsWith(".pdf"),
-      );
+    // Find the output file
+    const files = await fs.readdir(outputDir);
+    const baseName = path.basename(inputPath, path.extname(inputPath));
+    const pdfFile = files.find(
+      (f) => f.includes(baseName) && f.endsWith(".pdf"),
+    );
 
-      if (!pdfFile) {
-        throw new Error("Conversion completed but output file not found");
-      }
-
-      const pdfPath = path.join(outputDir, pdfFile);
-      const pdfBytes = await fs.readFile(pdfPath);
-
-      console.log(`✅ Converted to PDF: ${pdfBytes.length} bytes`);
-
-      // Clean up
-      await safeUnlink(inputPath);
-      await safeUnlink(pdfPath);
-
-      res.set({
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="${req.file.originalname.replace(/\.(docx?|doc)$/i, "")}.pdf"`,
-        "Content-Length": pdfBytes.length,
-      });
-
-      res.send(pdfBytes);
-    } catch (error) {
-      console.error("❌ LibreOffice conversion failed:", error.message);
-      await safeUnlink(inputPath);
-      throw new Error(
-        "Word to PDF conversion failed. Make sure the Word document is valid.",
-      );
+    if (!pdfFile) {
+      throw new Error("Conversion completed but output file not found");
     }
+
+    pdfPath = path.join(outputDir, pdfFile);
+    const pdfBytes = await fs.readFile(pdfPath);
+
+    console.log(`✅ Converted to PDF: ${pdfBytes.length} bytes`);
+
+    res.set({
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="${req.file.originalname.replace(/\.(docx?|doc)$/i, "")}.pdf"`,
+      "Content-Length": pdfBytes.length,
+    });
+
+    res.send(pdfBytes);
   } catch (error) {
     console.error("❌ Word to PDF error:", error.message);
     res.status(500).json({
       error: "Conversion failed",
       message: error.message,
     });
+  } finally {
+    // ✅ GUARANTEED cleanup - runs even if LibreOffice fails
+    await safeUnlink(inputPath);
+    await safeUnlink(pdfPath);
   }
 });
 
@@ -606,7 +634,10 @@ app.get("/api/health", async (req, res) => {
     wordTools: hasLibre ? "Available" : "Not available",
   });
 });
-// Multer error handler middleware
+
+// ============================================
+// ✅ MULTER ERROR HANDLER - MUST BE AFTER ALL ROUTES!
+// ============================================
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
     if (err.code === "LIMIT_FILE_SIZE") {
@@ -621,6 +652,7 @@ app.use((err, req, res, next) => {
   }
   next(err);
 });
+
 // ============================================
 // START SERVER
 // ============================================
