@@ -9,6 +9,7 @@ const fsSync = require("fs");
 const path = require("path");
 const { PDFDocument } = require("pdf-lib");
 const sharp = require("sharp");
+const { exec } = require("child_process");
 const { fromPath } = require("pdf2pic");
 const util = require("util");
 const execPromise = util.promisify(exec);
@@ -63,6 +64,17 @@ app.use(
 );
 app.use(express.json());
 app.use(express.static("public"));
+
+// ============================================
+// HELPER: Safe file cleanup (never throws)
+// ============================================
+async function safeUnlink(filePath) {
+  try {
+    await safeUnlink(filePath);
+  } catch (_) {
+    // ignore: file may already be deleted / missing
+  }
+}
 
 // ============================================
 // HELPER: Check if Ghostscript is available
@@ -182,8 +194,8 @@ app.post("/api/compress", upload.single("file"), async (req, res) => {
     );
 
     // Clean up
-    await fs.unlink(inputPath);
-    await fs.unlink(outputPath);
+    await safeUnlink(inputPath);
+    await safeUnlink(outputPath);
 
     res.set({
       "Content-Type": "application/pdf",
@@ -216,7 +228,7 @@ app.post("/api/merge", upload.array("files", 10), async (req, res) => {
       const pdf = await PDFDocument.load(pdfBytes);
       const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
       pages.forEach((page) => mergedPdf.addPage(page));
-      await fs.unlink(file.path); // Clean up
+      await safeUnlink(file.path); // Clean up
     }
 
     const mergedBytes = await mergedPdf.save();
@@ -260,7 +272,7 @@ app.post("/api/split", upload.single("file"), async (req, res) => {
       });
     }
 
-    await fs.unlink(inputPath);
+    await safeUnlink(inputPath);
 
     res.json({
       success: true,
@@ -297,7 +309,7 @@ app.post("/api/jpg-to-pdf", upload.array("files", 20), async (req, res) => {
         height: jpgImage.height,
       });
 
-      await fs.unlink(file.path); // Clean up
+      await safeUnlink(file.path); // Clean up
     }
 
     const pdfBytes = await pdfDoc.save();
@@ -343,7 +355,7 @@ app.post("/api/pdf-to-jpg", upload.single("file"), async (req, res) => {
       });
     }
 
-    await fs.unlink(inputPath);
+    await safeUnlink(inputPath);
 
     res.json({
       success: true,
@@ -379,7 +391,7 @@ app.post("/api/protect", upload.single("file"), async (req, res) => {
 
     const protectedBytes = await pdfDoc.save();
 
-    await fs.unlink(inputPath);
+    await safeUnlink(inputPath);
 
     res.set({
       "Content-Type": "application/pdf",
@@ -410,7 +422,7 @@ app.post("/api/unlock", upload.single("file"), async (req, res) => {
 
     const unlockedBytes = await pdfDoc.save();
 
-    await fs.unlink(inputPath);
+    await safeUnlink(inputPath);
 
     res.set({
       "Content-Type": "application/pdf",
@@ -438,7 +450,7 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
     const hasLibreOffice = await checkLibreOffice();
 
     if (!hasLibreOffice) {
-      await fs.unlink(inputPath);
+      await safeUnlink(inputPath);
       return res.status(501).json({
         error: "Feature not available",
         message:
@@ -474,8 +486,8 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
       console.log(`✅ Converted to Word: ${docxBytes.length} bytes`);
 
       // Clean up
-      await fs.unlink(inputPath);
-      await fs.unlink(docxPath);
+      await safeUnlink(inputPath);
+      await safeUnlink(docxPath);
 
       res.set({
         "Content-Type":
@@ -487,7 +499,7 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
       res.send(docxBytes);
     } catch (error) {
       console.error("❌ LibreOffice conversion failed:", error.message);
-      await fs.unlink(inputPath);
+      await safeUnlink(inputPath);
       throw new Error(
         "Conversion failed. If this is a scanned PDF, OCR is required. Otherwise the file may be malformed.",
       );
@@ -516,7 +528,7 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
     const hasLibreOffice = await checkLibreOffice();
 
     if (!hasLibreOffice) {
-      await fs.unlink(inputPath);
+      await safeUnlink(inputPath);
       return res.status(501).json({
         error: "Feature not available",
         message:
@@ -552,8 +564,8 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
       console.log(`✅ Converted to PDF: ${pdfBytes.length} bytes`);
 
       // Clean up
-      await fs.unlink(inputPath);
-      await fs.unlink(pdfPath);
+      await safeUnlink(inputPath);
+      await safeUnlink(pdfPath);
 
       res.set({
         "Content-Type": "application/pdf",
