@@ -504,6 +504,10 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
     }
 
     console.log("🔧 Using LibreOffice for PDF to Word conversion");
+    
+    // Get timestamp before conversion to identify new files
+    const beforeConversion = Date.now();
+    
     const command =
       `libreoffice --headless --nologo --nofirststartwizard --norestore ` +
       `-env:UserInstallation=${LO_PROFILE} ` +
@@ -513,37 +517,41 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
     console.log(`📝 Running command: ${command}`);
     await execPromise(command, { timeout: 90000 }); // 90 second timeout
 
-    // Small delay to ensure file is written
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Longer delay to ensure file is fully written
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Find the output file with better debugging
+    // Find the newest .docx file created after conversion started
     const files = await fs.readdir(outputDir);
     console.log(`📂 Files in output directory:`, files);
     
-    const baseName = path.basename(inputPath, path.extname(inputPath));
-    console.log(`🔍 Looking for file with basename: ${baseName}`);
-    
-    // Try multiple matching strategies
-    let docxFile = files.find(f => f === `${baseName}.docx`);
-    
-    if (!docxFile) {
-      // Try partial match
-      docxFile = files.find(f => f.includes(baseName) && f.endsWith(".docx"));
+    // Get all .docx files with their stats
+    const docxFiles = [];
+    for (const file of files) {
+      if (file.toLowerCase().endsWith('.docx')) {
+        const filePath = path.join(outputDir, file);
+        try {
+          const stats = await fs.stat(filePath);
+          // Only consider files created/modified after we started conversion
+          if (stats.mtimeMs >= beforeConversion) {
+            docxFiles.push({ file, mtime: stats.mtimeMs });
+          }
+        } catch (err) {
+          console.error(`Error checking file ${file}:`, err);
+        }
+      }
     }
     
-    if (!docxFile) {
-      // Try case-insensitive match
-      const baseNameLower = baseName.toLowerCase();
-      docxFile = files.find(f => f.toLowerCase().includes(baseNameLower) && f.toLowerCase().endsWith(".docx"));
+    if (docxFiles.length === 0) {
+      console.error(`❌ No DOCX files found created after conversion`);
+      console.error(`📂 All available files:`, files);
+      throw new Error(`Conversion completed but output file not found. No .docx files were created.`);
     }
-
-    if (!docxFile) {
-      console.error(`❌ Could not find DOCX file. Searched for: ${baseName}`);
-      console.error(`📂 Available files:`, files);
-      throw new Error(`Conversion completed but output file not found. Expected file containing "${baseName}.docx"`);
-    }
-
-    console.log(`✅ Found output file: ${docxFile}`);
+    
+    // Sort by modification time (newest first) and pick the first
+    docxFiles.sort((a, b) => b.mtime - a.mtime);
+    const docxFile = docxFiles[0].file;
+    
+    console.log(`✅ Found newest output file: ${docxFile}`);
 
     docxPath = path.join(outputDir, docxFile);
     const docxBytes = await fs.readFile(docxPath);
@@ -597,6 +605,10 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
     }
 
     console.log("🔧 Using LibreOffice for Word to PDF conversion");
+    
+    // Get timestamp before conversion to identify new files
+    const beforeConversion = Date.now();
+    
     const command =
       `libreoffice --headless --nologo --nofirststartwizard --norestore ` +
       `-env:UserInstallation=${LO_PROFILE} ` +
@@ -606,37 +618,41 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
     console.log(`📝 Running command: ${command}`);
     await execPromise(command, { timeout: 90000 }); // 90 second timeout
 
-    // Small delay to ensure file is written
-    await new Promise(resolve => setTimeout(resolve, 500));
+    // Longer delay to ensure file is fully written
+    await new Promise(resolve => setTimeout(resolve, 1000));
 
-    // Find the output file with better debugging
+    // Find the newest .pdf file created after conversion started
     const files = await fs.readdir(outputDir);
     console.log(`📂 Files in output directory:`, files);
     
-    const baseName = path.basename(inputPath, path.extname(inputPath));
-    console.log(`🔍 Looking for file with basename: ${baseName}`);
-    
-    // Try multiple matching strategies
-    let pdfFile = files.find(f => f === `${baseName}.pdf`);
-    
-    if (!pdfFile) {
-      // Try partial match
-      pdfFile = files.find(f => f.includes(baseName) && f.endsWith(".pdf"));
+    // Get all .pdf files with their stats
+    const pdfFiles = [];
+    for (const file of files) {
+      if (file.toLowerCase().endsWith('.pdf')) {
+        const filePath = path.join(outputDir, file);
+        try {
+          const stats = await fs.stat(filePath);
+          // Only consider files created/modified after we started conversion
+          if (stats.mtimeMs >= beforeConversion) {
+            pdfFiles.push({ file, mtime: stats.mtimeMs });
+          }
+        } catch (err) {
+          console.error(`Error checking file ${file}:`, err);
+        }
+      }
     }
     
-    if (!pdfFile) {
-      // Try case-insensitive match
-      const baseNameLower = baseName.toLowerCase();
-      pdfFile = files.find(f => f.toLowerCase().includes(baseNameLower) && f.toLowerCase().endsWith(".pdf"));
+    if (pdfFiles.length === 0) {
+      console.error(`❌ No PDF files found created after conversion`);
+      console.error(`📂 All available files:`, files);
+      throw new Error(`Conversion completed but output file not found. No .pdf files were created.`);
     }
-
-    if (!pdfFile) {
-      console.error(`❌ Could not find PDF file. Searched for: ${baseName}`);
-      console.error(`📂 Available files:`, files);
-      throw new Error(`Conversion completed but output file not found. Expected file containing "${baseName}.pdf"`);
-    }
-
-    console.log(`✅ Found output file: ${pdfFile}`);
+    
+    // Sort by modification time (newest first) and pick the first
+    pdfFiles.sort((a, b) => b.mtime - a.mtime);
+    const pdfFile = pdfFiles[0].file;
+    
+    console.log(`✅ Found newest output file: ${pdfFile}`);
 
     pdfPath = path.join(outputDir, pdfFile);
     const pdfBytes = await fs.readFile(pdfPath);
