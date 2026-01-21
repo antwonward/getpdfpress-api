@@ -516,6 +516,9 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
 
     console.log("🔧 Using LibreOffice for PDF to Word conversion");
     
+    // Ensure output directory has proper permissions
+    await execPromise(`chmod 777 "${outputDir}"`);
+    
     // Get timestamp before conversion to identify new files
     const beforeConversion = Date.now();
     
@@ -526,10 +529,20 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
       `--outdir "${outputDir}" "${inputPath}"`;
 
     console.log(`📝 Running command: ${command}`);
-    await execPromise(command, { timeout: 90000 }); // 90 second timeout
+    
+    try {
+      const { stdout, stderr } = await execPromise(command, { timeout: 90000 }); // 90 second timeout
+      if (stdout) console.log('📤 LibreOffice stdout:', stdout);
+      if (stderr) console.log('⚠️ LibreOffice stderr:', stderr);
+    } catch (execError) {
+      console.error('❌ LibreOffice execution error:', execError.message);
+      if (execError.stdout) console.log('📤 stdout:', execError.stdout);
+      if (execError.stderr) console.log('⚠️ stderr:', execError.stderr);
+      throw new Error(`LibreOffice failed: ${execError.stderr || execError.message}`);
+    }
 
     // Longer delay to ensure file is fully written
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Find the newest .docx file created after conversion started
     const files = await fs.readdir(outputDir);
@@ -617,6 +630,9 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
 
     console.log("🔧 Using LibreOffice for Word to PDF conversion");
     
+    // Ensure output directory has proper permissions
+    await execPromise(`chmod 777 "${outputDir}"`);
+    
     // Get timestamp before conversion to identify new files
     const beforeConversion = Date.now();
     
@@ -627,10 +643,20 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
       `--outdir "${outputDir}" "${inputPath}"`;
 
     console.log(`📝 Running command: ${command}`);
-    await execPromise(command, { timeout: 90000 }); // 90 second timeout
+    
+    try {
+      const { stdout, stderr } = await execPromise(command, { timeout: 90000 }); // 90 second timeout
+      if (stdout) console.log('📤 LibreOffice stdout:', stdout);
+      if (stderr) console.log('⚠️ LibreOffice stderr:', stderr);
+    } catch (execError) {
+      console.error('❌ LibreOffice execution error:', execError.message);
+      if (execError.stdout) console.log('📤 stdout:', execError.stdout);
+      if (execError.stderr) console.log('⚠️ stderr:', execError.stderr);
+      throw new Error(`LibreOffice failed: ${execError.stderr || execError.message}`);
+    }
 
     // Longer delay to ensure file is fully written
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Find the newest .pdf file created after conversion started
     const files = await fs.readdir(outputDir);
