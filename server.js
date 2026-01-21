@@ -10,7 +10,6 @@ const path = require("path");
 const { PDFDocument } = require("pdf-lib");
 const sharp = require("sharp");
 const { fromPath } = require("pdf2pic");
-const { exec } = require("child_process");
 const util = require("util");
 const execPromise = util.promisify(exec);
 
@@ -113,7 +112,7 @@ async function compressWithGhostscript(inputPath, outputPath, targetSizeKB) {
     quality = "/printer"; // Higher quality (~300 DPI)
   }
 
-  const command = `gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=${quality} -dNOPAUSE -dQUIET -dBATCH -dDetectDuplicateImages=true -dCompressFonts=true -r150 -sOutputFile="${outputPath}" "${inputPath}"`;
+  const command = `gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=${quality} -dNOPAUSE -dQUIET -dBATCH -dDetectDuplicateImages=true -dCompressFonts=true -sOutputFile="${outputPath}" "${inputPath}"`;
 
   try {
     console.log("📄 Executing Ghostscript compression...");
