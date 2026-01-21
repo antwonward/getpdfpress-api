@@ -510,18 +510,40 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
       `--convert-to docx:"MS Word 2007 XML" ` +
       `--outdir "${outputDir}" "${inputPath}"`;
 
+    console.log(`📝 Running command: ${command}`);
     await execPromise(command, { timeout: 90000 }); // 90 second timeout
 
-    // Find the output file
+    // Small delay to ensure file is written
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Find the output file with better debugging
     const files = await fs.readdir(outputDir);
+    console.log(`📂 Files in output directory:`, files);
+    
     const baseName = path.basename(inputPath, path.extname(inputPath));
-    const docxFile = files.find(
-      (f) => f.includes(baseName) && f.endsWith(".docx"),
-    );
+    console.log(`🔍 Looking for file with basename: ${baseName}`);
+    
+    // Try multiple matching strategies
+    let docxFile = files.find(f => f === `${baseName}.docx`);
+    
+    if (!docxFile) {
+      // Try partial match
+      docxFile = files.find(f => f.includes(baseName) && f.endsWith(".docx"));
+    }
+    
+    if (!docxFile) {
+      // Try case-insensitive match
+      const baseNameLower = baseName.toLowerCase();
+      docxFile = files.find(f => f.toLowerCase().includes(baseNameLower) && f.toLowerCase().endsWith(".docx"));
+    }
 
     if (!docxFile) {
-      throw new Error("Conversion completed but output file not found");
+      console.error(`❌ Could not find DOCX file. Searched for: ${baseName}`);
+      console.error(`📂 Available files:`, files);
+      throw new Error(`Conversion completed but output file not found. Expected file containing "${baseName}.docx"`);
     }
+
+    console.log(`✅ Found output file: ${docxFile}`);
 
     docxPath = path.join(outputDir, docxFile);
     const docxBytes = await fs.readFile(docxPath);
@@ -581,18 +603,40 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
       `--convert-to pdf ` +
       `--outdir "${outputDir}" "${inputPath}"`;
 
+    console.log(`📝 Running command: ${command}`);
     await execPromise(command, { timeout: 90000 }); // 90 second timeout
 
-    // Find the output file
+    // Small delay to ensure file is written
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    // Find the output file with better debugging
     const files = await fs.readdir(outputDir);
+    console.log(`📂 Files in output directory:`, files);
+    
     const baseName = path.basename(inputPath, path.extname(inputPath));
-    const pdfFile = files.find(
-      (f) => f.includes(baseName) && f.endsWith(".pdf"),
-    );
+    console.log(`🔍 Looking for file with basename: ${baseName}`);
+    
+    // Try multiple matching strategies
+    let pdfFile = files.find(f => f === `${baseName}.pdf`);
+    
+    if (!pdfFile) {
+      // Try partial match
+      pdfFile = files.find(f => f.includes(baseName) && f.endsWith(".pdf"));
+    }
+    
+    if (!pdfFile) {
+      // Try case-insensitive match
+      const baseNameLower = baseName.toLowerCase();
+      pdfFile = files.find(f => f.toLowerCase().includes(baseNameLower) && f.toLowerCase().endsWith(".pdf"));
+    }
 
     if (!pdfFile) {
-      throw new Error("Conversion completed but output file not found");
+      console.error(`❌ Could not find PDF file. Searched for: ${baseName}`);
+      console.error(`📂 Available files:`, files);
+      throw new Error(`Conversion completed but output file not found. Expected file containing "${baseName}.pdf"`);
     }
+
+    console.log(`✅ Found output file: ${pdfFile}`);
 
     pdfPath = path.join(outputDir, pdfFile);
     const pdfBytes = await fs.readFile(pdfPath);
