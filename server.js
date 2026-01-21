@@ -76,6 +76,18 @@ async function isGhostscriptAvailable() {
 }
 
 // ============================================
+// HELPER: Check if LibreOffice is available
+// ============================================
+async function checkLibreOffice() {
+  try {
+    await execPromise('libreoffice --version');
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+// ============================================
 // HELPER: Compress with Ghostscript (REAL compression!)
 // ============================================
 async function compressWithGhostscript(inputPath, outputPath, targetSizeKB) {
@@ -414,15 +426,157 @@ app.post('/api/unlock', upload.single('file'), async (req, res) => {
 });
 
 // ============================================
+// TOOL 9: PDF to Word
+// ============================================
+app.post('/api/pdf-to-word', upload.single('file'), async (req, res) => {
+  console.log('📥 PDF to Word request received');
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const inputPath = req.file.path;
+    const hasLibreOffice = await checkLibreOffice();
+    
+    if (!hasLibreOffice) {
+      await fs.unlink(inputPath);
+      return res.status(501).json({ 
+        error: 'Feature not available', 
+        message: 'PDF to Word requires LibreOffice to be installed on the server.',
+        suggestion: 'This feature is coming soon!'
+      });
+    }
+
+    console.log('🔧 Using LibreOffice for PDF to Word conversion');
+    const command = `libreoffice --headless --convert-to docx:"MS Word 2007 XML" --outdir "${outputDir}" "${inputPath}"`;
+    
+    try {
+      await execPromise(command, { timeout: 90000 }); // 90 second timeout
+      
+      // Find the output file
+      const files = await fs.readdir(outputDir);
+      const baseName = path.basename(inputPath, path.extname(inputPath));
+      const docxFile = files.find(f => f.includes(baseName) && f.endsWith('.docx'));
+      
+      if (!docxFile) {
+        throw new Error('Conversion completed but output file not found');
+      }
+      
+      const docxPath = path.join(outputDir, docxFile);
+      const docxBytes = await fs.readFile(docxPath);
+      
+      console.log(`✅ Converted to Word: ${docxBytes.length} bytes`);
+      
+      // Clean up
+      await fs.unlink(inputPath);
+      await fs.unlink(docxPath);
+      
+      res.set({
+        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+        'Content-Disposition': `attachment; filename="${req.file.originalname.replace(/\.pdf$/i, '')}.docx"`,
+        'Content-Length': docxBytes.length
+      });
+      
+      res.send(docxBytes);
+      
+    } catch (error) {
+      console.error('❌ LibreOffice conversion failed:', error.message);
+      await fs.unlink(inputPath);
+      throw new Error('PDF to Word conversion failed. This works best with text-based PDFs, not scanned images.');
+    }
+
+  } catch (error) {
+    console.error('❌ PDF to Word error:', error.message);
+    res.status(500).json({ 
+      error: 'Conversion failed', 
+      message: error.message,
+      suggestion: 'Try a text-based PDF (not a scanned document).'
+    });
+  }
+});
+
+// ============================================
+// TOOL 10: Word to PDF
+// ============================================
+app.post('/api/word-to-pdf', upload.single('file'), async (req, res) => {
+  console.log('📥 Word to PDF request received');
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    const inputPath = req.file.path;
+    const hasLibreOffice = await checkLibreOffice();
+    
+    if (!hasLibreOffice) {
+      await fs.unlink(inputPath);
+      return res.status(501).json({ 
+        error: 'Feature not available', 
+        message: 'Word to PDF requires LibreOffice to be installed on the server.',
+        suggestion: 'This feature is coming soon!'
+      });
+    }
+
+    console.log('🔧 Using LibreOffice for Word to PDF conversion');
+    const command = `libreoffice --headless --convert-to pdf --outdir "${outputDir}" "${inputPath}"`;
+    
+    try {
+      await execPromise(command, { timeout: 90000 }); // 90 second timeout
+      
+      // Find the output file
+      const files = await fs.readdir(outputDir);
+      const baseName = path.basename(inputPath, path.extname(inputPath));
+      const pdfFile = files.find(f => f.includes(baseName) && f.endsWith('.pdf'));
+      
+      if (!pdfFile) {
+        throw new Error('Conversion completed but output file not found');
+      }
+      
+      const pdfPath = path.join(outputDir, pdfFile);
+      const pdfBytes = await fs.readFile(pdfPath);
+      
+      console.log(`✅ Converted to PDF: ${pdfBytes.length} bytes`);
+      
+      // Clean up
+      await fs.unlink(inputPath);
+      await fs.unlink(pdfPath);
+      
+      res.set({
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="${req.file.originalname.replace(/\.(docx?|doc)$/i, '')}.pdf"`,
+        'Content-Length': pdfBytes.length
+      });
+      
+      res.send(pdfBytes);
+      
+    } catch (error) {
+      console.error('❌ LibreOffice conversion failed:', error.message);
+      await fs.unlink(inputPath);
+      throw new Error('Word to PDF conversion failed. Make sure the Word document is valid.');
+    }
+
+  } catch (error) {
+    console.error('❌ Word to PDF error:', error.message);
+    res.status(500).json({ 
+      error: 'Conversion failed', 
+      message: error.message
+    });
+  }
+});
+
+// ============================================
 // HEALTH CHECK
 // ============================================
 app.get('/api/health', async (req, res) => {
   const hasGs = await isGhostscriptAvailable();
+  const hasLibre = await checkLibreOffice();
   res.json({ 
     status: 'OK', 
     message: 'getPDFpress API is running',
     ghostscript: hasGs ? 'available' : 'not available',
-    compression: hasGs ? 'Real (Ghostscript)' : 'Basic (pdf-lib)'
+    libreoffice: hasLibre ? 'available' : 'not available',
+    compression: hasGs ? 'Real (Ghostscript)' : 'Basic (pdf-lib)',
+    wordTools: hasLibre ? 'Available' : 'Not available'
   });
 });
 
@@ -431,10 +585,15 @@ app.get('/api/health', async (req, res) => {
 // ============================================
 app.listen(PORT, async () => {
   const hasGs = await isGhostscriptAvailable();
+  const hasLibre = await checkLibreOffice();
   console.log(`🚀 getPDFpress API running on port ${PORT}`);
   console.log(`📝 Test it: http://localhost:${PORT}/api/health`);
   console.log(`🔧 Compression: ${hasGs ? 'REAL (Ghostscript)' : 'BASIC (pdf-lib only)'}`);
+  console.log(`📄 Word Tools: ${hasLibre ? 'AVAILABLE (LibreOffice)' : 'NOT AVAILABLE'}`);
   if (!hasGs) {
     console.log('⚠️  Install Ghostscript for better compression!');
+  }
+  if (!hasLibre) {
+    console.log('⚠️  Install LibreOffice for PDF↔Word conversion!');
   }
 });
