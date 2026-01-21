@@ -1,56 +1,171 @@
-// server.js - Complete PDF Processing API for getPDFpress
-// Deploy this to Hostinger or any Node.js hosting
+// server.js - UPGRADED with REAL PDF Compression
+// This version uses Ghostscript for actual file size reduction
 
 const express = require('express');
 const multer = require('multer');
 const cors = require('cors');
 const fs = require('fs').promises;
+const fsSync = require('fs');
 const path = require('path');
 const { PDFDocument } = require('pdf-lib');
 const sharp = require('sharp');
 const { fromPath } = require('pdf2pic');
+const { exec } = require('child_process');
+const util = require('util');
+const execPromise = util.promisify(exec);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configure file upload (10MB limit)
+// Create uploads directory if it doesn't exist
+const uploadsDir = path.join(__dirname, 'uploads');
+const outputDir = path.join(__dirname, 'output');
+
+try {
+  if (!fsSync.existsSync(uploadsDir)) {
+    fsSync.mkdirSync(uploadsDir, { recursive: true });
+    console.log('✅ Created uploads directory');
+  }
+  if (!fsSync.existsSync(outputDir)) {
+    fsSync.mkdirSync(outputDir, { recursive: true });
+    console.log('✅ Created output directory');
+  }
+} catch (err) {
+  console.error('❌ Error creating directories:', err);
+}
+
+// Configure file upload (50MB limit)
 const upload = multer({
   dest: 'uploads/',
-  limits: { fileSize: 50 * 1024 * 1024 }
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
 });
 
-app.use(cors());
+app.use(cors({
+  origin: '*',
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type']
+}));
 app.use(express.json());
 app.use(express.static('public'));
+
+// Multer error handler middleware
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === 'LIMIT_FILE_SIZE') {
+      return res.status(413).json({ 
+        error: 'File too large', 
+        message: 'File must be under 50MB. Try compressing it first or splitting it into smaller files.',
+        maxSize: '50MB'
+      });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
+});
+
+// ============================================
+// HELPER: Check if Ghostscript is available
+// ============================================
+async function isGhostscriptAvailable() {
+  try {
+    await execPromise('gs --version');
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+// ============================================
+// HELPER: Compress with Ghostscript (REAL compression!)
+// ============================================
+async function compressWithGhostscript(inputPath, outputPath, targetSizeKB) {
+  const hasGs = await isGhostscriptAvailable();
+  
+  if (!hasGs) {
+    console.log('⚠️ Ghostscript not available, using fallback compression');
+    return compressWithPdfLib(inputPath, outputPath);
+  }
+
+  console.log('🔧 Using Ghostscript for compression');
+
+  // Determine compression quality based on target size
+  let quality;
+  if (targetSizeKB <= 200) {
+    quality = '/screen'; // Lowest quality, smallest size (~72 DPI)
+  } else if (targetSizeKB <= 500) {
+    quality = '/ebook'; // Medium quality (~150 DPI)
+  } else {
+    quality = '/printer'; // Higher quality (~300 DPI)
+  }
+
+  const command = `gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=${quality} -dNOPAUSE -dQUIET -dBATCH -dDetectDuplicateImages=true -dCompressFonts=true -r150 -sOutputFile="${outputPath}" "${inputPath}"`;
+
+  try {
+    console.log('📄 Executing Ghostscript compression...');
+    await execPromise(command);
+    console.log('✅ Ghostscript compression complete');
+    return true;
+  } catch (error) {
+    console.error('❌ Ghostscript failed:', error.message);
+    // Fallback to basic compression
+    return compressWithPdfLib(inputPath, outputPath);
+  }
+}
+
+// ============================================
+// HELPER: Fallback compression with pdf-lib
+// ============================================
+async function compressWithPdfLib(inputPath, outputPath) {
+  console.log('📦 Using pdf-lib fallback compression');
+  const pdfBytes = await fs.readFile(inputPath);
+  const pdfDoc = await PDFDocument.load(pdfBytes);
+
+  // Basic compression: remove metadata
+  pdfDoc.setTitle('');
+  pdfDoc.setAuthor('');
+  pdfDoc.setSubject('');
+  pdfDoc.setKeywords([]);
+  pdfDoc.setProducer('');
+  pdfDoc.setCreator('');
+
+  const compressedBytes = await pdfDoc.save({
+    useObjectStreams: false,
+    addDefaultPage: false,
+  });
+
+  await fs.writeFile(outputPath, compressedBytes);
+  return true;
+}
 
 // ============================================
 // TOOL 1 & 2: COMPRESS PDF (500KB / 200KB)
 // ============================================
 app.post('/api/compress', upload.single('file'), async (req, res) => {
+  console.log('📥 Compress request received');
   try {
+    if (!req.file) {
+      console.log('❌ No file uploaded');
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
     const { targetSize } = req.body; // "500" or "200" in KB
     const inputPath = req.file.path;
-    const targetBytes = parseInt(targetSize) * 1024;
+    const outputPath = path.join(outputDir, `compressed-${Date.now()}.pdf`);
+    const targetSizeKB = parseInt(targetSize);
 
-    const pdfBytes = await fs.readFile(inputPath);
-    const pdfDoc = await PDFDocument.load(pdfBytes);
+    console.log(`📄 Processing: ${req.file.originalname} (${req.file.size} bytes)`);
+    console.log(`🎯 Target size: ${targetSize}KB`);
 
-    // Basic compression: remove metadata, optimize
-    pdfDoc.setTitle('');
-    pdfDoc.setAuthor('');
-    pdfDoc.setSubject('');
-    pdfDoc.setKeywords([]);
-    pdfDoc.setProducer('');
-    pdfDoc.setCreator('');
+    // Use Ghostscript for real compression
+    await compressWithGhostscript(inputPath, outputPath, targetSizeKB);
 
-    // Save with compression
-    const compressedBytes = await pdfDoc.save({
-      useObjectStreams: false,
-      addDefaultPage: false,
-    });
+    // Read the compressed file
+    const compressedBytes = await fs.readFile(outputPath);
+    console.log(`✅ Compressed: ${compressedBytes.length} bytes (${Math.round((1 - compressedBytes.length / req.file.size) * 100)}% reduction)`);
 
     // Clean up
     await fs.unlink(inputPath);
+    await fs.unlink(outputPath);
 
     res.set({
       'Content-Type': 'application/pdf',
@@ -61,8 +176,13 @@ app.post('/api/compress', upload.single('file'), async (req, res) => {
     res.send(Buffer.from(compressedBytes));
 
   } catch (error) {
-    console.error('Compression error:', error);
-    res.status(500).json({ error: 'Compression failed' });
+    console.error('❌ Compression error:', error.message);
+    console.error('Stack:', error.stack);
+    res.status(500).json({ 
+      error: 'Compression failed', 
+      details: error.message,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
   }
 });
 
@@ -242,7 +362,7 @@ app.post('/api/protect', upload.single('file'), async (req, res) => {
 
     // Note: pdf-lib doesn't support encryption natively
     // You'll need qpdf or similar tool for real encryption
-    // This is a placeholder - see notes below
+    // This is a placeholder
 
     const protectedBytes = await pdfDoc.save();
 
@@ -296,43 +416,25 @@ app.post('/api/unlock', upload.single('file'), async (req, res) => {
 // ============================================
 // HEALTH CHECK
 // ============================================
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'OK', message: 'getPDFpress API is running' });
+app.get('/api/health', async (req, res) => {
+  const hasGs = await isGhostscriptAvailable();
+  res.json({ 
+    status: 'OK', 
+    message: 'getPDFpress API is running',
+    ghostscript: hasGs ? 'available' : 'not available',
+    compression: hasGs ? 'Real (Ghostscript)' : 'Basic (pdf-lib)'
+  });
 });
 
 // ============================================
 // START SERVER
 // ============================================
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
+  const hasGs = await isGhostscriptAvailable();
   console.log(`🚀 getPDFpress API running on port ${PORT}`);
   console.log(`📝 Test it: http://localhost:${PORT}/api/health`);
+  console.log(`🔧 Compression: ${hasGs ? 'REAL (Ghostscript)' : 'BASIC (pdf-lib only)'}`);
+  if (!hasGs) {
+    console.log('⚠️  Install Ghostscript for better compression!');
+  }
 });
-
-// ============================================
-// NOTES FOR PRODUCTION
-// ============================================
-/*
-1. COMPRESSION: For better results, use Ghostscript:
-   npm install ghostscript4js
-   
-2. ENCRYPTION: pdf-lib has limited encryption support.
-   Use 'qpdf' command-line tool instead:
-   npm install node-qpdf2
-   
-3. FILE CLEANUP: Add scheduled cleanup of uploads folder
-   
-4. RATE LIMITING: Add express-rate-limit
-   
-5. FILE SIZE: Adjust multer limits based on your needs
-   
-6. SECURITY: 
-   - Validate file types strictly
-   - Scan for malware
-   - Use helmet.js for headers
-   - Implement authentication if needed
-   
-7. STORAGE: For production, use:
-   - AWS S3 for file storage
-   - Redis for caching
-   - PostgreSQL for metadata
-*/
