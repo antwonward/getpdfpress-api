@@ -69,10 +69,11 @@ app.use(express.static("public"));
 // HELPER: Safe file cleanup (never throws)
 // ============================================
 async function safeUnlink(filePath) {
+  if (!filePath) return;
   try {
     await safeUnlink(filePath);
   } catch (_) {
-    // ignore: file may already be deleted / missing
+    // ignore: file may already be deleted / missing / locked
   }
 }
 
@@ -576,7 +577,7 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
       res.send(pdfBytes);
     } catch (error) {
       console.error("❌ LibreOffice conversion failed:", error.message);
-      await fs.unlink(inputPath);
+      await safeUnlink(inputPath);
       throw new Error(
         "Word to PDF conversion failed. Make sure the Word document is valid.",
       );
