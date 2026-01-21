@@ -1,44 +1,48 @@
 // server.js - UPGRADED with REAL PDF Compression
 // This version uses Ghostscript for actual file size reduction
 
-const express = require('express');
-const multer = require('multer');
-const cors = require('cors');
-const fs = require('fs').promises;
-const fsSync = require('fs');
-const path = require('path');
-const { PDFDocument } = require('pdf-lib');
-const sharp = require('sharp');
-const { fromPath } = require('pdf2pic');
-const { exec } = require('child_process');
-const util = require('util');
+const express = require("express");
+const multer = require("multer");
+const cors = require("cors");
+const fs = require("fs").promises;
+const fsSync = require("fs");
+const path = require("path");
+const { PDFDocument } = require("pdf-lib");
+const sharp = require("sharp");
+const { fromPath } = require("pdf2pic");
+const { exec } = require("child_process");
+const util = require("util");
 const execPromise = util.promisify(exec);
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
 // Create uploads directory if it doesn't exist
-const uploadsDir = path.join(__dirname, 'uploads');
-const outputDir = path.join(__dirname, 'output');
+const uploadsDir = path.join(__dirname, "uploads");
+const outputDir = path.join(__dirname, "output");
 
 try {
   if (!fsSync.existsSync(uploadsDir)) {
     fsSync.mkdirSync(uploadsDir, { recursive: true });
-    console.log('✅ Created uploads directory');
+    console.log("✅ Created uploads directory");
   }
   if (!fsSync.existsSync(outputDir)) {
     fsSync.mkdirSync(outputDir, { recursive: true });
-    console.log('✅ Created output directory');
+    console.log("✅ Created output directory");
   }
 } catch (err) {
-  console.error('❌ Error creating directories:', err);
+  console.error("❌ Error creating directories:", err);
 }
 
-// Configure file upload (50MB limit) - KEEP file extensions for LibreOffice reliability
+// ================================
+// Multer: keep file extensions (CRITICAL for LibreOffice)
+// ================================
 const sanitize = (name) => name.replace(/[^a-zA-Z0-9._-]/g, "_");
 
 const storage = multer.diskStorage({
-  destination: "uploads/",
+  destination: (req, file, cb) => {
+    cb(null, uploadsDir);
+  },
   filename: (req, file, cb) => {
     const ext = path.extname(file.originalname) || "";
     const base = path.basename(file.originalname, ext);
@@ -48,26 +52,28 @@ const storage = multer.diskStorage({
 
 const upload = multer({
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB
 });
 
-
-app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type']
-}));
+app.use(
+  cors({
+    origin: "*",
+    methods: ["GET", "POST", "OPTIONS"],
+    allowedHeaders: ["Content-Type"],
+  }),
+);
 app.use(express.json());
-app.use(express.static('public'));
+app.use(express.static("public"));
 
 // Multer error handler middleware
 app.use((err, req, res, next) => {
   if (err instanceof multer.MulterError) {
-    if (err.code === 'LIMIT_FILE_SIZE') {
-      return res.status(413).json({ 
-        error: 'File too large', 
-        message: 'File must be under 50MB. Try compressing it first or splitting it into smaller files.',
-        maxSize: '50MB'
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({
+        error: "File too large",
+        message:
+          "File must be under 50MB. Try compressing it first or splitting it into smaller files.",
+        maxSize: "50MB",
       });
     }
     return res.status(400).json({ error: err.message });
@@ -80,19 +86,20 @@ app.use((err, req, res, next) => {
 // ============================================
 async function isGhostscriptAvailable() {
   try {
-    await execPromise('gs --version');
+    await execPromise("gs --version");
     return true;
   } catch (error) {
     return false;
   }
 }
+const LO_PROFILE = "file:///tmp/lo-profile";
 
 // ============================================
 // HELPER: Check if LibreOffice is available
 // ============================================
 async function checkLibreOffice() {
   try {
-    await execPromise('libreoffice --version');
+    await execPromise("libreoffice --version");
     return true;
   } catch (error) {
     return false;
@@ -104,33 +111,33 @@ async function checkLibreOffice() {
 // ============================================
 async function compressWithGhostscript(inputPath, outputPath, targetSizeKB) {
   const hasGs = await isGhostscriptAvailable();
-  
+
   if (!hasGs) {
-    console.log('⚠️ Ghostscript not available, using fallback compression');
+    console.log("⚠️ Ghostscript not available, using fallback compression");
     return compressWithPdfLib(inputPath, outputPath);
   }
 
-  console.log('🔧 Using Ghostscript for compression');
+  console.log("🔧 Using Ghostscript for compression");
 
   // Determine compression quality based on target size
   let quality;
   if (targetSizeKB <= 200) {
-    quality = '/screen'; // Lowest quality, smallest size (~72 DPI)
+    quality = "/screen"; // Lowest quality, smallest size (~72 DPI)
   } else if (targetSizeKB <= 500) {
-    quality = '/ebook'; // Medium quality (~150 DPI)
+    quality = "/ebook"; // Medium quality (~150 DPI)
   } else {
-    quality = '/printer'; // Higher quality (~300 DPI)
+    quality = "/printer"; // Higher quality (~300 DPI)
   }
 
   const command = `gs -sDEVICE=pdfwrite -dCompatibilityLevel=1.4 -dPDFSETTINGS=${quality} -dNOPAUSE -dQUIET -dBATCH -dDetectDuplicateImages=true -dCompressFonts=true -r150 -sOutputFile="${outputPath}" "${inputPath}"`;
 
   try {
-    console.log('📄 Executing Ghostscript compression...');
+    console.log("📄 Executing Ghostscript compression...");
     await execPromise(command);
-    console.log('✅ Ghostscript compression complete');
+    console.log("✅ Ghostscript compression complete");
     return true;
   } catch (error) {
-    console.error('❌ Ghostscript failed:', error.message);
+    console.error("❌ Ghostscript failed:", error.message);
     // Fallback to basic compression
     return compressWithPdfLib(inputPath, outputPath);
   }
@@ -140,17 +147,17 @@ async function compressWithGhostscript(inputPath, outputPath, targetSizeKB) {
 // HELPER: Fallback compression with pdf-lib
 // ============================================
 async function compressWithPdfLib(inputPath, outputPath) {
-  console.log('📦 Using pdf-lib fallback compression');
+  console.log("📦 Using pdf-lib fallback compression");
   const pdfBytes = await fs.readFile(inputPath);
   const pdfDoc = await PDFDocument.load(pdfBytes);
 
   // Basic compression: remove metadata
-  pdfDoc.setTitle('');
-  pdfDoc.setAuthor('');
-  pdfDoc.setSubject('');
+  pdfDoc.setTitle("");
+  pdfDoc.setAuthor("");
+  pdfDoc.setSubject("");
   pdfDoc.setKeywords([]);
-  pdfDoc.setProducer('');
-  pdfDoc.setCreator('');
+  pdfDoc.setProducer("");
+  pdfDoc.setCreator("");
 
   const compressedBytes = await pdfDoc.save({
     useObjectStreams: false,
@@ -164,12 +171,12 @@ async function compressWithPdfLib(inputPath, outputPath) {
 // ============================================
 // TOOL 1 & 2: COMPRESS PDF (500KB / 200KB)
 // ============================================
-app.post('/api/compress', upload.single('file'), async (req, res) => {
-  console.log('📥 Compress request received');
+app.post("/api/compress", upload.single("file"), async (req, res) => {
+  console.log("📥 Compress request received");
   try {
     if (!req.file) {
-      console.log('❌ No file uploaded');
-      return res.status(400).json({ error: 'No file uploaded' });
+      console.log("❌ No file uploaded");
+      return res.status(400).json({ error: "No file uploaded" });
     }
 
     const { targetSize } = req.body; // "500" or "200" in KB
@@ -177,7 +184,9 @@ app.post('/api/compress', upload.single('file'), async (req, res) => {
     const outputPath = path.join(outputDir, `compressed-${Date.now()}.pdf`);
     const targetSizeKB = parseInt(targetSize);
 
-    console.log(`📄 Processing: ${req.file.originalname} (${req.file.size} bytes)`);
+    console.log(
+      `📄 Processing: ${req.file.originalname} (${req.file.size} bytes)`,
+    );
     console.log(`🎯 Target size: ${targetSize}KB`);
 
     // Use Ghostscript for real compression
@@ -185,27 +194,28 @@ app.post('/api/compress', upload.single('file'), async (req, res) => {
 
     // Read the compressed file
     const compressedBytes = await fs.readFile(outputPath);
-    console.log(`✅ Compressed: ${compressedBytes.length} bytes (${Math.round((1 - compressedBytes.length / req.file.size) * 100)}% reduction)`);
+    console.log(
+      `✅ Compressed: ${compressedBytes.length} bytes (${Math.round((1 - compressedBytes.length / req.file.size) * 100)}% reduction)`,
+    );
 
     // Clean up
     await fs.unlink(inputPath);
     await fs.unlink(outputPath);
 
     res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="compressed-${req.file.originalname}"`,
-      'Content-Length': compressedBytes.length
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="compressed-${req.file.originalname}"`,
+      "Content-Length": compressedBytes.length,
     });
 
     res.send(Buffer.from(compressedBytes));
-
   } catch (error) {
-    console.error('❌ Compression error:', error.message);
-    console.error('Stack:', error.stack);
-    res.status(500).json({ 
-      error: 'Compression failed', 
+    console.error("❌ Compression error:", error.message);
+    console.error("Stack:", error.stack);
+    res.status(500).json({
+      error: "Compression failed",
       details: error.message,
-      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+      stack: process.env.NODE_ENV === "development" ? error.stack : undefined,
     });
   }
 });
@@ -213,7 +223,7 @@ app.post('/api/compress', upload.single('file'), async (req, res) => {
 // ============================================
 // TOOL 3: MERGE PDFs
 // ============================================
-app.post('/api/merge', upload.array('files', 10), async (req, res) => {
+app.post("/api/merge", upload.array("files", 10), async (req, res) => {
   try {
     const mergedPdf = await PDFDocument.create();
 
@@ -222,30 +232,29 @@ app.post('/api/merge', upload.array('files', 10), async (req, res) => {
       const pdfBytes = await fs.readFile(file.path);
       const pdf = await PDFDocument.load(pdfBytes);
       const pages = await mergedPdf.copyPages(pdf, pdf.getPageIndices());
-      pages.forEach(page => mergedPdf.addPage(page));
+      pages.forEach((page) => mergedPdf.addPage(page));
       await fs.unlink(file.path); // Clean up
     }
 
     const mergedBytes = await mergedPdf.save();
 
     res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': 'attachment; filename="merged.pdf"',
-      'Content-Length': mergedBytes.length
+      "Content-Type": "application/pdf",
+      "Content-Disposition": 'attachment; filename="merged.pdf"',
+      "Content-Length": mergedBytes.length,
     });
 
     res.send(Buffer.from(mergedBytes));
-
   } catch (error) {
-    console.error('Merge error:', error);
-    res.status(500).json({ error: 'Merge failed' });
+    console.error("Merge error:", error);
+    res.status(500).json({ error: "Merge failed" });
   }
 });
 
 // ============================================
 // TOOL 4: SPLIT PDF
 // ============================================
-app.post('/api/split', upload.single('file'), async (req, res) => {
+app.post("/api/split", upload.single("file"), async (req, res) => {
   try {
     const { pages } = req.body; // e.g., "1-3,5,7-9" or "all"
     const inputPath = req.file.path;
@@ -264,7 +273,7 @@ app.post('/api/split', upload.single('file'), async (req, res) => {
       const pdfBytes = await newPdf.save();
       splitPdfs.push({
         name: `page-${i + 1}.pdf`,
-        data: Buffer.from(pdfBytes).toString('base64')
+        data: Buffer.from(pdfBytes).toString("base64"),
       });
     }
 
@@ -272,19 +281,18 @@ app.post('/api/split', upload.single('file'), async (req, res) => {
 
     res.json({
       success: true,
-      files: splitPdfs
+      files: splitPdfs,
     });
-
   } catch (error) {
-    console.error('Split error:', error);
-    res.status(500).json({ error: 'Split failed' });
+    console.error("Split error:", error);
+    res.status(500).json({ error: "Split failed" });
   }
 });
 
 // ============================================
 // TOOL 5: JPG to PDF
 // ============================================
-app.post('/api/jpg-to-pdf', upload.array('files', 20), async (req, res) => {
+app.post("/api/jpg-to-pdf", upload.array("files", 20), async (req, res) => {
   try {
     const pdfDoc = await PDFDocument.create();
 
@@ -292,7 +300,7 @@ app.post('/api/jpg-to-pdf', upload.array('files', 20), async (req, res) => {
       // Read and optimize image
       const imageBuffer = await fs.readFile(file.path);
       const image = await sharp(imageBuffer)
-        .resize(2000, 2000, { fit: 'inside', withoutEnlargement: true })
+        .resize(2000, 2000, { fit: "inside", withoutEnlargement: true })
         .jpeg({ quality: 85 })
         .toBuffer();
 
@@ -312,44 +320,43 @@ app.post('/api/jpg-to-pdf', upload.array('files', 20), async (req, res) => {
     const pdfBytes = await pdfDoc.save();
 
     res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': 'attachment; filename="images.pdf"',
-      'Content-Length': pdfBytes.length
+      "Content-Type": "application/pdf",
+      "Content-Disposition": 'attachment; filename="images.pdf"',
+      "Content-Length": pdfBytes.length,
     });
 
     res.send(Buffer.from(pdfBytes));
-
   } catch (error) {
-    console.error('JPG to PDF error:', error);
-    res.status(500).json({ error: 'Conversion failed' });
+    console.error("JPG to PDF error:", error);
+    res.status(500).json({ error: "Conversion failed" });
   }
 });
 
 // ============================================
 // TOOL 6: PDF to JPG
 // ============================================
-app.post('/api/pdf-to-jpg', upload.single('file'), async (req, res) => {
+app.post("/api/pdf-to-jpg", upload.single("file"), async (req, res) => {
   try {
     const inputPath = req.file.path;
-    
+
     const options = {
       density: 200,
       saveFilename: "page",
-      savePath: "./output",
+      savePath: outputDir,
       format: "jpg",
       width: 2000,
-      height: 2000
+      height: 2000,
     };
 
     const convert = fromPath(inputPath, options);
     const pageCount = await getPdfPageCount(inputPath);
-    
+
     const images = [];
     for (let i = 1; i <= pageCount; i++) {
       const result = await convert(i, { responseType: "base64" });
       images.push({
         page: i,
-        data: result.base64
+        data: result.base64,
       });
     }
 
@@ -357,12 +364,11 @@ app.post('/api/pdf-to-jpg', upload.single('file'), async (req, res) => {
 
     res.json({
       success: true,
-      images: images
+      images: images,
     });
-
   } catch (error) {
-    console.error('PDF to JPG error:', error);
-    res.status(500).json({ error: 'Conversion failed' });
+    console.error("PDF to JPG error:", error);
+    res.status(500).json({ error: "Conversion failed" });
   }
 });
 
@@ -376,7 +382,7 @@ async function getPdfPageCount(filePath) {
 // ============================================
 // TOOL 7: PROTECT PDF (Add Password)
 // ============================================
-app.post('/api/protect', upload.single('file'), async (req, res) => {
+app.post("/api/protect", upload.single("file"), async (req, res) => {
   try {
     const { password } = req.body;
     const inputPath = req.file.path;
@@ -393,31 +399,30 @@ app.post('/api/protect', upload.single('file'), async (req, res) => {
     await fs.unlink(inputPath);
 
     res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="protected-${req.file.originalname}"`,
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="protected-${req.file.originalname}"`,
     });
 
     res.send(Buffer.from(protectedBytes));
-
   } catch (error) {
-    console.error('Protection error:', error);
-    res.status(500).json({ error: 'Protection failed' });
+    console.error("Protection error:", error);
+    res.status(500).json({ error: "Protection failed" });
   }
 });
 
 // ============================================
 // TOOL 8: UNLOCK PDF (Remove Password)
 // ============================================
-app.post('/api/unlock', upload.single('file'), async (req, res) => {
+app.post("/api/unlock", upload.single("file"), async (req, res) => {
   try {
     const { password } = req.body;
     const inputPath = req.file.path;
 
     const pdfBytes = await fs.readFile(inputPath);
-    
+
     // Attempt to load with password
     const pdfDoc = await PDFDocument.load(pdfBytes, {
-      ignoreEncryption: true
+      ignoreEncryption: true,
     });
 
     const unlockedBytes = await pdfDoc.save();
@@ -425,84 +430,91 @@ app.post('/api/unlock', upload.single('file'), async (req, res) => {
     await fs.unlink(inputPath);
 
     res.set({
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="unlocked-${req.file.originalname}"`,
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `attachment; filename="unlocked-${req.file.originalname}"`,
     });
 
     res.send(Buffer.from(unlockedBytes));
-
   } catch (error) {
-    console.error('Unlock error:', error);
-    res.status(500).json({ error: 'Unlock failed - wrong password?' });
+    console.error("Unlock error:", error);
+    res.status(500).json({ error: "Unlock failed - wrong password?" });
   }
 });
 
 // ============================================
 // TOOL 9: PDF to Word
 // ============================================
-app.post('/api/pdf-to-word', upload.single('file'), async (req, res) => {
-  console.log('📥 PDF to Word request received');
+app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
+  console.log("📥 PDF to Word request received");
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+      return res.status(400).json({ error: "No file uploaded" });
     }
 
     const inputPath = req.file.path;
     const hasLibreOffice = await checkLibreOffice();
-    
+
     if (!hasLibreOffice) {
       await fs.unlink(inputPath);
-      return res.status(501).json({ 
-        error: 'Feature not available', 
-        message: 'PDF to Word requires LibreOffice to be installed on the server.',
-        suggestion: 'This feature is coming soon!'
+      return res.status(501).json({
+        error: "Feature not available",
+        message:
+          "PDF to Word requires LibreOffice to be installed on the server.",
+        suggestion: "This feature is coming soon!",
       });
     }
 
-    console.log('🔧 Using LibreOffice for PDF to Word conversion');
-    const command = `libreoffice --headless --convert-to docx:"MS Word 2007 XML" --outdir "${outputDir}" "${inputPath}"`;
-    
+    console.log("🔧 Using LibreOffice for PDF to Word conversion");
+    const command =
+      `libreoffice --headless --nologo --nofirststartwizard --norestore ` +
+      `-env:UserInstallation=${LO_PROFILE} ` +
+      `--convert-to docx:"MS Word 2007 XML" ` +
+      `--outdir "${outputDir}" "${inputPath}"`;
+
     try {
       await execPromise(command, { timeout: 90000 }); // 90 second timeout
-      
+
       // Find the output file
       const files = await fs.readdir(outputDir);
       const baseName = path.basename(inputPath, path.extname(inputPath));
-      const docxFile = files.find(f => f.includes(baseName) && f.endsWith('.docx'));
-      
+      const docxFile = files.find(
+        (f) => f.includes(baseName) && f.endsWith(".docx"),
+      );
+
       if (!docxFile) {
-        throw new Error('Conversion completed but output file not found');
+        throw new Error("Conversion completed but output file not found");
       }
-      
+
       const docxPath = path.join(outputDir, docxFile);
       const docxBytes = await fs.readFile(docxPath);
-      
+
       console.log(`✅ Converted to Word: ${docxBytes.length} bytes`);
-      
+
       // Clean up
       await fs.unlink(inputPath);
       await fs.unlink(docxPath);
-      
-      res.set({
-        'Content-Type': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        'Content-Disposition': `attachment; filename="${req.file.originalname.replace(/\.pdf$/i, '')}.docx"`,
-        'Content-Length': docxBytes.length
-      });
-      
-      res.send(docxBytes);
-      
-    } catch (error) {
-      console.error('❌ LibreOffice conversion failed:', error.message);
-      await fs.unlink(inputPath);
-      throw new Error('PDF to Word conversion failed. This works best with text-based PDFs, not scanned images.');
-    }
 
+      res.set({
+        "Content-Type":
+          "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        "Content-Disposition": `attachment; filename="${req.file.originalname.replace(/\.pdf$/i, "")}.docx"`,
+        "Content-Length": docxBytes.length,
+      });
+
+      res.send(docxBytes);
+    } catch (error) {
+      console.error("❌ LibreOffice conversion failed:", error.message);
+      await fs.unlink(inputPath);
+      throw new Error(
+        "Conversion failed. If this is a scanned PDF, OCR is required. Otherwise the file may be malformed.",
+      );
+    }
   } catch (error) {
-    console.error('❌ PDF to Word error:', error.message);
-    res.status(500).json({ 
-      error: 'Conversion failed', 
+    console.error("❌ PDF to Word error:", error.message);
+    res.status(500).json({
+      error: "Conversion failed",
       message: error.message,
-      suggestion: 'Try a text-based PDF (not a scanned document).'
+      suggestion: "Try a text-based PDF (not a scanned document).",
     });
   }
 });
@@ -510,68 +522,75 @@ app.post('/api/pdf-to-word', upload.single('file'), async (req, res) => {
 // ============================================
 // TOOL 10: Word to PDF
 // ============================================
-app.post('/api/word-to-pdf', upload.single('file'), async (req, res) => {
-  console.log('📥 Word to PDF request received');
+app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
+  console.log("📥 Word to PDF request received");
   try {
     if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
+      return res.status(400).json({ error: "No file uploaded" });
     }
 
     const inputPath = req.file.path;
     const hasLibreOffice = await checkLibreOffice();
-    
+
     if (!hasLibreOffice) {
       await fs.unlink(inputPath);
-      return res.status(501).json({ 
-        error: 'Feature not available', 
-        message: 'Word to PDF requires LibreOffice to be installed on the server.',
-        suggestion: 'This feature is coming soon!'
+      return res.status(501).json({
+        error: "Feature not available",
+        message:
+          "Word to PDF requires LibreOffice to be installed on the server.",
+        suggestion: "This feature is coming soon!",
       });
     }
 
-    console.log('🔧 Using LibreOffice for Word to PDF conversion');
-    const command = `libreoffice --headless --convert-to pdf --outdir "${outputDir}" "${inputPath}"`;
-    
+    console.log("🔧 Using LibreOffice for Word to PDF conversion");
+    const command =
+      `libreoffice --headless --nologo --nofirststartwizard --norestore ` +
+      `-env:UserInstallation=${LO_PROFILE} ` +
+      `--convert-to pdf ` +
+      `--outdir "${outputDir}" "${inputPath}"`;
+
     try {
       await execPromise(command, { timeout: 90000 }); // 90 second timeout
-      
+
       // Find the output file
       const files = await fs.readdir(outputDir);
       const baseName = path.basename(inputPath, path.extname(inputPath));
-      const pdfFile = files.find(f => f.includes(baseName) && f.endsWith('.pdf'));
-      
+      const pdfFile = files.find(
+        (f) => f.includes(baseName) && f.endsWith(".pdf"),
+      );
+
       if (!pdfFile) {
-        throw new Error('Conversion completed but output file not found');
+        throw new Error("Conversion completed but output file not found");
       }
-      
+
       const pdfPath = path.join(outputDir, pdfFile);
       const pdfBytes = await fs.readFile(pdfPath);
-      
+
       console.log(`✅ Converted to PDF: ${pdfBytes.length} bytes`);
-      
+
       // Clean up
       await fs.unlink(inputPath);
       await fs.unlink(pdfPath);
-      
-      res.set({
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="${req.file.originalname.replace(/\.(docx?|doc)$/i, '')}.pdf"`,
-        'Content-Length': pdfBytes.length
-      });
-      
-      res.send(pdfBytes);
-      
-    } catch (error) {
-      console.error('❌ LibreOffice conversion failed:', error.message);
-      await fs.unlink(inputPath);
-      throw new Error('Word to PDF conversion failed. Make sure the Word document is valid.');
-    }
 
+      res.set({
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${req.file.originalname.replace(/\.(docx?|doc)$/i, "")}.pdf"`,
+        "Content-Length": pdfBytes.length,
+      });
+
+      res.send(pdfBytes);
+    } catch (error) {
+      console.error("❌ LibreOffice conversion failed:", error.message);
+      await fs.unlink(inputPath);
+      throw new Error(
+        "Word to PDF conversion failed. Make sure the Word document is valid.",
+      );
+    }
   } catch (error) {
-    console.error('❌ Word to PDF error:', error.message);
-    res.status(500).json({ 
-      error: 'Conversion failed', 
-      message: error.message
+    console.error("❌ Word to PDF error:", error.message);
+    res.status(500).json({
+      error: "Conversion failed",
+      message: error.message,
     });
   }
 });
@@ -579,16 +598,16 @@ app.post('/api/word-to-pdf', upload.single('file'), async (req, res) => {
 // ============================================
 // HEALTH CHECK
 // ============================================
-app.get('/api/health', async (req, res) => {
+app.get("/api/health", async (req, res) => {
   const hasGs = await isGhostscriptAvailable();
   const hasLibre = await checkLibreOffice();
-  res.json({ 
-    status: 'OK', 
-    message: 'getPDFpress API is running',
-    ghostscript: hasGs ? 'available' : 'not available',
-    libreoffice: hasLibre ? 'available' : 'not available',
-    compression: hasGs ? 'Real (Ghostscript)' : 'Basic (pdf-lib)',
-    wordTools: hasLibre ? 'Available' : 'Not available'
+  res.json({
+    status: "OK",
+    message: "getPDFpress API is running",
+    ghostscript: hasGs ? "available" : "not available",
+    libreoffice: hasLibre ? "available" : "not available",
+    compression: hasGs ? "Real (Ghostscript)" : "Basic (pdf-lib)",
+    wordTools: hasLibre ? "Available" : "Not available",
   });
 });
 
@@ -600,12 +619,16 @@ app.listen(PORT, async () => {
   const hasLibre = await checkLibreOffice();
   console.log(`🚀 getPDFpress API running on port ${PORT}`);
   console.log(`📝 Test it: http://localhost:${PORT}/api/health`);
-  console.log(`🔧 Compression: ${hasGs ? 'REAL (Ghostscript)' : 'BASIC (pdf-lib only)'}`);
-  console.log(`📄 Word Tools: ${hasLibre ? 'AVAILABLE (LibreOffice)' : 'NOT AVAILABLE'}`);
+  console.log(
+    `🔧 Compression: ${hasGs ? "REAL (Ghostscript)" : "BASIC (pdf-lib only)"}`,
+  );
+  console.log(
+    `📄 Word Tools: ${hasLibre ? "AVAILABLE (LibreOffice)" : "NOT AVAILABLE"}`,
+  );
   if (!hasGs) {
-    console.log('⚠️  Install Ghostscript for better compression!');
+    console.log("⚠️  Install Ghostscript for better compression!");
   }
   if (!hasLibre) {
-    console.log('⚠️  Install LibreOffice for PDF↔Word conversion!');
+    console.log("⚠️  Install LibreOffice for PDF↔Word conversion!");
   }
 });
