@@ -34,11 +34,23 @@ try {
   console.error('❌ Error creating directories:', err);
 }
 
-// Configure file upload (50MB limit)
-const upload = multer({
-  dest: 'uploads/',
-  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
+// Configure file upload (50MB limit) - KEEP file extensions for LibreOffice reliability
+const sanitize = (name) => name.replace(/[^a-zA-Z0-9._-]/g, "_");
+
+const storage = multer.diskStorage({
+  destination: "uploads/",
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || "";
+    const base = path.basename(file.originalname, ext);
+    cb(null, `${Date.now()}-${sanitize(base)}${ext.toLowerCase()}`);
+  },
 });
+
+const upload = multer({
+  storage,
+  limits: { fileSize: 50 * 1024 * 1024 }, // 50MB limit
+});
+
 
 app.use(cors({
   origin: '*',
