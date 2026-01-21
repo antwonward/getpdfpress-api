@@ -1,11 +1,16 @@
-# Dockerfile - Node.js with Ghostscript
+# Dockerfile - Complete with Ghostscript + LibreOffice
+# This enables ALL 8 PDF tools!
+
 FROM node:18-slim
 
-# Install Ghostscript
+# Install Ghostscript (for compression) AND LibreOffice (for Word conversion)
 RUN apt-get update && \
-    apt-get install -y ghostscript && \
-    apt-get clean && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+    ghostscript \
+    libreoffice \
+    libreoffice-writer \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Create app directory
 WORKDIR /app
@@ -13,17 +18,17 @@ WORKDIR /app
 # Copy package files
 COPY package*.json ./
 
-# Install dependencies
+# Install Node dependencies
 RUN npm install --production
 
-# Copy app source
+# Copy application code
 COPY . .
 
-# Create directories
+# Create necessary directories
 RUN mkdir -p uploads output
 
 # Expose port
 EXPOSE 3000
 
-# Start app
+# Start application
 CMD ["npm", "start"]
