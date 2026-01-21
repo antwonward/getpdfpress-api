@@ -3,6 +3,10 @@
 
 FROM node:18-slim
 
+# Set HOME and TMPDIR for LibreOffice (helps LO find proper temp directories)
+ENV HOME=/tmp
+ENV TMPDIR=/tmp
+
 # Install all required system dependencies
 # - Ghostscript: PDF compression
 # - LibreOffice: PDF ↔ Word conversion

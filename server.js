@@ -516,8 +516,12 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
 
     console.log("🔧 Using LibreOffice for PDF to Word conversion");
     
+    // Create UNIQUE LibreOffice profile per request (prevents lock/corruption)
+    const loProfileDir = `/tmp/lo-profile-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await execPromise(`mkdir -p "${loProfileDir}" && chmod 777 "${loProfileDir}"`);
+    
     // Use /tmp for LibreOffice output (guaranteed write permissions)
-    const tempOutputDir = `/tmp/lo-output-${Date.now()}`;
+    const tempOutputDir = `/tmp/lo-output-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     await execPromise(`mkdir -p "${tempOutputDir}" && chmod 777 "${tempOutputDir}"`);
     
     // Get timestamp before conversion to identify new files
@@ -525,7 +529,8 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
     
     const command =
       `libreoffice --headless --nologo --nofirststartwizard --norestore ` +
-      `-env:UserInstallation=${LO_PROFILE} ` +
+      `-env:UserInstallation=file://${loProfileDir} ` +
+      `--infilter="writer_pdf_import" ` +
       `--convert-to docx ` +
       `--outdir "${tempOutputDir}" "${inputPath}"`;
 
@@ -539,8 +544,8 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
       console.error('❌ LibreOffice execution error:', execError.message);
       if (execError.stdout) console.log('📤 stdout:', execError.stdout);
       if (execError.stderr) console.log('⚠️ stderr:', execError.stderr);
-      // Clean up temp directory
-      await execPromise(`rm -rf "${tempOutputDir}"`).catch(() => {});
+      // Clean up temp directories
+      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
       throw new Error(`LibreOffice failed: ${execError.stderr || execError.message}`);
     }
 
@@ -571,8 +576,8 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
     if (docxFiles.length === 0) {
       console.error(`❌ No DOCX files found created after conversion`);
       console.error(`📂 All available files:`, files);
-      // Clean up temp directory
-      await execPromise(`rm -rf "${tempOutputDir}"`).catch(() => {});
+      // Clean up temp directories
+      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
       throw new Error(`Conversion completed but output file not found. No .docx files were created.`);
     }
     
@@ -585,8 +590,8 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
     docxPath = path.join(tempOutputDir, docxFile);
     const docxBytes = await fs.readFile(docxPath);
     
-    // Clean up temp directory after reading file
-    await execPromise(`rm -rf "${tempOutputDir}"`).catch(() => {});
+    // Clean up temp directories after reading file
+    await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
 
     console.log(`✅ Converted to Word: ${docxBytes.length} bytes`);
 
@@ -638,17 +643,22 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
 
     console.log("🔧 Using LibreOffice for Word to PDF conversion");
     
-    // Ensure output directory has proper permissions
-    await execPromise(`chmod 777 "${outputDir}"`);
+    // Create UNIQUE LibreOffice profile per request (prevents lock/corruption)
+    const loProfileDir = `/tmp/lo-profile-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await execPromise(`mkdir -p "${loProfileDir}" && chmod 777 "${loProfileDir}"`);
+    
+    // Use /tmp for LibreOffice output
+    const tempOutputDir = `/tmp/lo-output-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    await execPromise(`mkdir -p "${tempOutputDir}" && chmod 777 "${tempOutputDir}"`);
     
     // Get timestamp before conversion to identify new files
     const beforeConversion = Date.now();
     
     const command =
       `libreoffice --headless --nologo --nofirststartwizard --norestore ` +
-      `-env:UserInstallation=${LO_PROFILE} ` +
+      `-env:UserInstallation=file://${loProfileDir} ` +
       `--convert-to pdf ` +
-      `--outdir "${outputDir}" "${inputPath}"`;
+      `--outdir "${tempOutputDir}" "${inputPath}"`;
 
     console.log(`📝 Running command: ${command}`);
     
@@ -660,6 +670,8 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
       console.error('❌ LibreOffice execution error:', execError.message);
       if (execError.stdout) console.log('📤 stdout:', execError.stdout);
       if (execError.stderr) console.log('⚠️ stderr:', execError.stderr);
+      // Clean up temp directories
+      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
       throw new Error(`LibreOffice failed: ${execError.stderr || execError.message}`);
     }
 
@@ -667,14 +679,14 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Find the newest .pdf file created after conversion started
-    const files = await fs.readdir(outputDir);
-    console.log(`📂 Files in output directory:`, files);
+    const files = await fs.readdir(tempOutputDir);
+    console.log(`📂 Files in temp directory:`, files);
     
     // Get all .pdf files with their stats
     const pdfFiles = [];
     for (const file of files) {
       if (file.toLowerCase().endsWith('.pdf')) {
-        const filePath = path.join(outputDir, file);
+        const filePath = path.join(tempOutputDir, file);
         try {
           const stats = await fs.stat(filePath);
           // Only consider files created/modified after we started conversion
@@ -690,6 +702,8 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
     if (pdfFiles.length === 0) {
       console.error(`❌ No PDF files found created after conversion`);
       console.error(`📂 All available files:`, files);
+      // Clean up temp directories
+      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
       throw new Error(`Conversion completed but output file not found. No .pdf files were created.`);
     }
     
@@ -699,8 +713,11 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
     
     console.log(`✅ Found newest output file: ${pdfFile}`);
 
-    pdfPath = path.join(outputDir, pdfFile);
+    pdfPath = path.join(tempOutputDir, pdfFile);
     const pdfBytes = await fs.readFile(pdfPath);
+    
+    // Clean up temp directories after reading file
+    await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
 
     console.log(`✅ Converted to PDF: ${pdfBytes.length} bytes`);
 
