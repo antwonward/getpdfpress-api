@@ -65,22 +65,6 @@ app.use(
 app.use(express.json());
 app.use(express.static("public"));
 
-// Multer error handler middleware
-app.use((err, req, res, next) => {
-  if (err instanceof multer.MulterError) {
-    if (err.code === "LIMIT_FILE_SIZE") {
-      return res.status(413).json({
-        error: "File too large",
-        message:
-          "File must be under 50MB. Try compressing it first or splitting it into smaller files.",
-        maxSize: "50MB",
-      });
-    }
-    return res.status(400).json({ error: err.message });
-  }
-  next(err);
-});
-
 // ============================================
 // HELPER: Check if Ghostscript is available
 // ============================================
@@ -610,7 +594,21 @@ app.get("/api/health", async (req, res) => {
     wordTools: hasLibre ? "Available" : "Not available",
   });
 });
-
+// Multer error handler middleware
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    if (err.code === "LIMIT_FILE_SIZE") {
+      return res.status(413).json({
+        error: "File too large",
+        message:
+          "File must be under 50MB. Try compressing it first or splitting it into smaller files.",
+        maxSize: "50MB",
+      });
+    }
+    return res.status(400).json({ error: err.message });
+  }
+  next(err);
+});
 // ============================================
 // START SERVER
 // ============================================
