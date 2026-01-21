@@ -516,8 +516,9 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
 
     console.log("🔧 Using LibreOffice for PDF to Word conversion");
     
-    // Ensure output directory has proper permissions
-    await execPromise(`chmod 777 "${outputDir}"`);
+    // Use /tmp for LibreOffice output (guaranteed write permissions)
+    const tempOutputDir = `/tmp/lo-output-${Date.now()}`;
+    await execPromise(`mkdir -p "${tempOutputDir}" && chmod 777 "${tempOutputDir}"`);
     
     // Get timestamp before conversion to identify new files
     const beforeConversion = Date.now();
@@ -526,7 +527,7 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
       `libreoffice --headless --nologo --nofirststartwizard --norestore ` +
       `-env:UserInstallation=${LO_PROFILE} ` +
       `--convert-to docx:"MS Word 2007 XML" ` +
-      `--outdir "${outputDir}" "${inputPath}"`;
+      `--outdir "${tempOutputDir}" "${inputPath}"`;
 
     console.log(`📝 Running command: ${command}`);
     
@@ -538,6 +539,8 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
       console.error('❌ LibreOffice execution error:', execError.message);
       if (execError.stdout) console.log('📤 stdout:', execError.stdout);
       if (execError.stderr) console.log('⚠️ stderr:', execError.stderr);
+      // Clean up temp directory
+      await execPromise(`rm -rf "${tempOutputDir}"`).catch(() => {});
       throw new Error(`LibreOffice failed: ${execError.stderr || execError.message}`);
     }
 
@@ -545,14 +548,14 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
     await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Find the newest .docx file created after conversion started
-    const files = await fs.readdir(outputDir);
-    console.log(`📂 Files in output directory:`, files);
+    const files = await fs.readdir(tempOutputDir);
+    console.log(`📂 Files in temp directory:`, files);
     
     // Get all .docx files with their stats
     const docxFiles = [];
     for (const file of files) {
       if (file.toLowerCase().endsWith('.docx')) {
-        const filePath = path.join(outputDir, file);
+        const filePath = path.join(tempOutputDir, file);
         try {
           const stats = await fs.stat(filePath);
           // Only consider files created/modified after we started conversion
@@ -568,6 +571,8 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
     if (docxFiles.length === 0) {
       console.error(`❌ No DOCX files found created after conversion`);
       console.error(`📂 All available files:`, files);
+      // Clean up temp directory
+      await execPromise(`rm -rf "${tempOutputDir}"`).catch(() => {});
       throw new Error(`Conversion completed but output file not found. No .docx files were created.`);
     }
     
@@ -577,8 +582,11 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
     
     console.log(`✅ Found newest output file: ${docxFile}`);
 
-    docxPath = path.join(outputDir, docxFile);
+    docxPath = path.join(tempOutputDir, docxFile);
     const docxBytes = await fs.readFile(docxPath);
+    
+    // Clean up temp directory after reading file
+    await execPromise(`rm -rf "${tempOutputDir}"`).catch(() => {});
 
     console.log(`✅ Converted to Word: ${docxBytes.length} bytes`);
 
