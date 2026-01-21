@@ -4,34 +4,3 @@ services:
     runtime: docker
     plan: free
     branch: main
-```
-
-5. **Commit:** "Force Docker build with render.yaml"
-
----
-
-### Step 2: Manual Deploy
-
-After committing render.yaml:
-
-1. **Go to Render Dashboard**
-2. **Click "Manual Deploy"**
-3. **Select "Deploy latest commit"**
-4. **Watch logs!**
-
-**This time you SHOULD see:**
-```
-==> Building...
-==> Detected Dockerfile
-==> Building Docker image...
-Step 1/10 : FROM node:18-slim
-Step 2/10 : RUN apt-get update && apt-get install -y ghostscript libreoffice...
-Reading package lists...
-The following NEW packages will be installed:
-  ghostscript
-  libreoffice
-  libreoffice-writer
-Unpacking libreoffice...
-Setting up libreoffice...
-==> Build successful ✅
-📄 Word Tools: AVAILABLE (LibreOffice)  ← Finally!
