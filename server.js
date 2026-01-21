@@ -71,7 +71,7 @@ app.use(express.static("public"));
 async function safeUnlink(filePath) {
   if (!filePath) return;
   try {
-    await safeUnlink(filePath);
+    await fs.unlink(filePath); // ✅ this is the real delete
   } catch (_) {
     // ignore: file may already be deleted / missing / locked
   }
