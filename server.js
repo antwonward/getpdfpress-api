@@ -117,7 +117,12 @@ async function checkLibreOffice() {
 // ============================================
 // HELPER: Compress with Ghostscript (REAL compression!)
 // ============================================
-async function compressWithGhostscript(inputPath, outputPath, targetSizeKB, compressionLevel = 'balanced') {
+async function compressWithGhostscript(
+  inputPath,
+  outputPath,
+  targetSizeKB,
+  compressionLevel = "balanced",
+) {
   const hasGs = await isGhostscriptAvailable();
 
   if (!hasGs) {
@@ -125,15 +130,17 @@ async function compressWithGhostscript(inputPath, outputPath, targetSizeKB, comp
     return compressWithPdfLib(inputPath, outputPath);
   }
 
-  console.log(`🔧 Using Ghostscript for compression (level: ${compressionLevel})`);
+  console.log(
+    `🔧 Using Ghostscript for compression (level: ${compressionLevel})`,
+  );
 
   // Determine compression quality based on compression level and target size
   let quality;
-  
-  if (compressionLevel === 'gentle') {
+
+  if (compressionLevel === "gentle") {
     // Gentle: Best quality, may exceed target size
     quality = "/printer"; // ~300 DPI
-  } else if (compressionLevel === 'strong') {
+  } else if (compressionLevel === "strong") {
     // Strong: Maximum compression, smallest file
     quality = "/screen"; // ~72 DPI
   } else {
@@ -199,7 +206,7 @@ app.post("/api/compress", upload.single("file"), async (req, res) => {
       return res.status(400).json({ error: "No file uploaded" });
     }
 
-    const { targetSize, compressionLevel = 'balanced' } = req.body; // "500" or "200" in KB, and compression level
+    const { targetSize, compressionLevel = "balanced" } = req.body; // "500" or "200" in KB, and compression level
     inputPath = req.file.path;
     outputPath = path.join(outputDir, `compressed-${Date.now()}.pdf`);
     const targetSizeKB = parseInt(targetSize);
@@ -211,7 +218,12 @@ app.post("/api/compress", upload.single("file"), async (req, res) => {
     console.log(`⚙️ Compression level: ${compressionLevel}`);
 
     // Use Ghostscript for real compression
-    await compressWithGhostscript(inputPath, outputPath, targetSizeKB, compressionLevel);
+    await compressWithGhostscript(
+      inputPath,
+      outputPath,
+      targetSizeKB,
+      compressionLevel,
+    );
 
     // Read the compressed file
     const compressedBytes = await fs.readFile(outputPath);
@@ -377,7 +389,10 @@ app.post("/api/pdf-to-jpg", upload.single("file"), async (req, res) => {
     inputPath = req.file.path;
 
     // ✅ Create a unique temp directory for this request
-    tempDir = path.join(outputDir, `pdf2jpg-${Date.now()}-${Math.random().toString(36).slice(2)}`);
+    tempDir = path.join(
+      outputDir,
+      `pdf2jpg-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+    );
     await fs.mkdir(tempDir, { recursive: true });
 
     const options = {
@@ -386,7 +401,6 @@ app.post("/api/pdf-to-jpg", upload.single("file"), async (req, res) => {
       savePath: tempDir, // ✅ Use per-request temp directory
       format: "jpg",
       width: 2000,
-      height: 2000,
     };
 
     const convert = fromPath(inputPath, options);
@@ -515,18 +529,22 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
     }
 
     console.log("🔧 Using LibreOffice for PDF to Word conversion");
-    
+
     // Create UNIQUE LibreOffice profile per request (prevents lock/corruption)
     const loProfileDir = `/tmp/lo-profile-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await execPromise(`mkdir -p "${loProfileDir}" && chmod 777 "${loProfileDir}"`);
-    
+    await execPromise(
+      `mkdir -p "${loProfileDir}" && chmod 777 "${loProfileDir}"`,
+    );
+
     // Use /tmp for LibreOffice output (guaranteed write permissions)
     const tempOutputDir = `/tmp/lo-output-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await execPromise(`mkdir -p "${tempOutputDir}" && chmod 777 "${tempOutputDir}"`);
-    
+    await execPromise(
+      `mkdir -p "${tempOutputDir}" && chmod 777 "${tempOutputDir}"`,
+    );
+
     // Get timestamp before conversion to identify new files
     const beforeConversion = Date.now();
-    
+
     const command =
       `libreoffice --headless --nologo --nofirststartwizard --norestore ` +
       `-env:UserInstallation=file://${loProfileDir} ` +
@@ -535,31 +553,35 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
       `--outdir "${tempOutputDir}" "${inputPath}"`;
 
     console.log(`📝 Running command: ${command}`);
-    
+
     try {
       const { stdout, stderr } = await execPromise(command, { timeout: 90000 }); // 90 second timeout
-      if (stdout) console.log('📤 LibreOffice stdout:', stdout);
-      if (stderr) console.log('⚠️ LibreOffice stderr:', stderr);
+      if (stdout) console.log("📤 LibreOffice stdout:", stdout);
+      if (stderr) console.log("⚠️ LibreOffice stderr:", stderr);
     } catch (execError) {
-      console.error('❌ LibreOffice execution error:', execError.message);
-      if (execError.stdout) console.log('📤 stdout:', execError.stdout);
-      if (execError.stderr) console.log('⚠️ stderr:', execError.stderr);
+      console.error("❌ LibreOffice execution error:", execError.message);
+      if (execError.stdout) console.log("📤 stdout:", execError.stdout);
+      if (execError.stderr) console.log("⚠️ stderr:", execError.stderr);
       // Clean up temp directories
-      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
-      throw new Error(`LibreOffice failed: ${execError.stderr || execError.message}`);
+      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(
+        () => {},
+      );
+      throw new Error(
+        `LibreOffice failed: ${execError.stderr || execError.message}`,
+      );
     }
 
     // Longer delay to ensure file is fully written
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Find the newest .docx file created after conversion started
     const files = await fs.readdir(tempOutputDir);
     console.log(`📂 Files in temp directory:`, files);
-    
+
     // Get all .docx files with their stats
     const docxFiles = [];
     for (const file of files) {
-      if (file.toLowerCase().endsWith('.docx')) {
+      if (file.toLowerCase().endsWith(".docx")) {
         const filePath = path.join(tempOutputDir, file);
         try {
           const stats = await fs.stat(filePath);
@@ -572,26 +594,32 @@ app.post("/api/pdf-to-word", upload.single("file"), async (req, res) => {
         }
       }
     }
-    
+
     if (docxFiles.length === 0) {
       console.error(`❌ No DOCX files found created after conversion`);
       console.error(`📂 All available files:`, files);
       // Clean up temp directories
-      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
-      throw new Error(`Conversion completed but output file not found. No .docx files were created.`);
+      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(
+        () => {},
+      );
+      throw new Error(
+        `Conversion completed but output file not found. No .docx files were created.`,
+      );
     }
-    
+
     // Sort by modification time (newest first) and pick the first
     docxFiles.sort((a, b) => b.mtime - a.mtime);
     const docxFile = docxFiles[0].file;
-    
+
     console.log(`✅ Found newest output file: ${docxFile}`);
 
     docxPath = path.join(tempOutputDir, docxFile);
     const docxBytes = await fs.readFile(docxPath);
-    
+
     // Clean up temp directories after reading file
-    await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
+    await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(
+      () => {},
+    );
 
     console.log(`✅ Converted to Word: ${docxBytes.length} bytes`);
 
@@ -642,18 +670,22 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
     }
 
     console.log("🔧 Using LibreOffice for Word to PDF conversion");
-    
+
     // Create UNIQUE LibreOffice profile per request (prevents lock/corruption)
     const loProfileDir = `/tmp/lo-profile-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await execPromise(`mkdir -p "${loProfileDir}" && chmod 777 "${loProfileDir}"`);
-    
+    await execPromise(
+      `mkdir -p "${loProfileDir}" && chmod 777 "${loProfileDir}"`,
+    );
+
     // Use /tmp for LibreOffice output
     const tempOutputDir = `/tmp/lo-output-${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    await execPromise(`mkdir -p "${tempOutputDir}" && chmod 777 "${tempOutputDir}"`);
-    
+    await execPromise(
+      `mkdir -p "${tempOutputDir}" && chmod 777 "${tempOutputDir}"`,
+    );
+
     // Get timestamp before conversion to identify new files
     const beforeConversion = Date.now();
-    
+
     const command =
       `libreoffice --headless --nologo --nofirststartwizard --norestore ` +
       `-env:UserInstallation=file://${loProfileDir} ` +
@@ -661,31 +693,35 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
       `--outdir "${tempOutputDir}" "${inputPath}"`;
 
     console.log(`📝 Running command: ${command}`);
-    
+
     try {
       const { stdout, stderr } = await execPromise(command, { timeout: 90000 }); // 90 second timeout
-      if (stdout) console.log('📤 LibreOffice stdout:', stdout);
-      if (stderr) console.log('⚠️ LibreOffice stderr:', stderr);
+      if (stdout) console.log("📤 LibreOffice stdout:", stdout);
+      if (stderr) console.log("⚠️ LibreOffice stderr:", stderr);
     } catch (execError) {
-      console.error('❌ LibreOffice execution error:', execError.message);
-      if (execError.stdout) console.log('📤 stdout:', execError.stdout);
-      if (execError.stderr) console.log('⚠️ stderr:', execError.stderr);
+      console.error("❌ LibreOffice execution error:", execError.message);
+      if (execError.stdout) console.log("📤 stdout:", execError.stdout);
+      if (execError.stderr) console.log("⚠️ stderr:", execError.stderr);
       // Clean up temp directories
-      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
-      throw new Error(`LibreOffice failed: ${execError.stderr || execError.message}`);
+      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(
+        () => {},
+      );
+      throw new Error(
+        `LibreOffice failed: ${execError.stderr || execError.message}`,
+      );
     }
 
     // Longer delay to ensure file is fully written
-    await new Promise(resolve => setTimeout(resolve, 2000));
+    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Find the newest .pdf file created after conversion started
     const files = await fs.readdir(tempOutputDir);
     console.log(`📂 Files in temp directory:`, files);
-    
+
     // Get all .pdf files with their stats
     const pdfFiles = [];
     for (const file of files) {
-      if (file.toLowerCase().endsWith('.pdf')) {
+      if (file.toLowerCase().endsWith(".pdf")) {
         const filePath = path.join(tempOutputDir, file);
         try {
           const stats = await fs.stat(filePath);
@@ -698,26 +734,32 @@ app.post("/api/word-to-pdf", upload.single("file"), async (req, res) => {
         }
       }
     }
-    
+
     if (pdfFiles.length === 0) {
       console.error(`❌ No PDF files found created after conversion`);
       console.error(`📂 All available files:`, files);
       // Clean up temp directories
-      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
-      throw new Error(`Conversion completed but output file not found. No .pdf files were created.`);
+      await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(
+        () => {},
+      );
+      throw new Error(
+        `Conversion completed but output file not found. No .pdf files were created.`,
+      );
     }
-    
+
     // Sort by modification time (newest first) and pick the first
     pdfFiles.sort((a, b) => b.mtime - a.mtime);
     const pdfFile = pdfFiles[0].file;
-    
+
     console.log(`✅ Found newest output file: ${pdfFile}`);
 
     pdfPath = path.join(tempOutputDir, pdfFile);
     const pdfBytes = await fs.readFile(pdfPath);
-    
+
     // Clean up temp directories after reading file
-    await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(() => {});
+    await execPromise(`rm -rf "${tempOutputDir}" "${loProfileDir}"`).catch(
+      () => {},
+    );
 
     console.log(`✅ Converted to PDF: ${pdfBytes.length} bytes`);
 
@@ -801,36 +843,35 @@ const server = app.listen(PORT, async () => {
 // GRACEFUL SHUTDOWN
 // ============================================
 // Handle shutdown signals gracefully (important for Render.com)
-process.on('SIGTERM', () => {
-  console.log('📴 SIGTERM received, shutting down gracefully...');
+process.on("SIGTERM", () => {
+  console.log("📴 SIGTERM received, shutting down gracefully...");
   server.close(() => {
-    console.log('✅ Server closed successfully');
+    console.log("✅ Server closed successfully");
     process.exit(0);
   });
-  
+
   // Force shutdown after 10 seconds if graceful shutdown hangs
   setTimeout(() => {
-    console.error('⚠️  Forced shutdown after timeout');
+    console.error("⚠️  Forced shutdown after timeout");
     process.exit(1);
   }, 10000);
 });
 
-process.on('SIGINT', () => {
-  console.log('📴 SIGINT received, shutting down gracefully...');
+process.on("SIGINT", () => {
+  console.log("📴 SIGINT received, shutting down gracefully...");
   server.close(() => {
-    console.log('✅ Server closed successfully');
+    console.log("✅ Server closed successfully");
     process.exit(0);
   });
 });
 
 // Handle uncaught errors
-process.on('uncaughtException', (err) => {
-  console.error('❌ Uncaught Exception:', err);
+process.on("uncaughtException", (err) => {
+  console.error("❌ Uncaught Exception:", err);
   process.exit(1);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
-  console.error('❌ Unhandled Rejection at:', promise, 'reason:', reason);
+process.on("unhandledRejection", (reason, promise) => {
+  console.error("❌ Unhandled Rejection at:", promise, "reason:", reason);
   process.exit(1);
 });
-
