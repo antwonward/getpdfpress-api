@@ -190,6 +190,31 @@ app.use(
   }),
 );
 app.use(express.json({ limit: '10mb' }));
+
+// ============================================
+// CANONICAL DOMAIN ENFORCEMENT
+// Force HTTPS + non-www in ONE redirect
+// ============================================
+app.use((req, res, next) => {
+  const host = req.headers.host || '';
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  
+  // Check if we need to redirect
+  const isWWW = host.startsWith('www.');
+  const isHTTP = protocol === 'http';
+  
+  // If either condition is true, redirect to canonical
+  if (isWWW || isHTTP) {
+    const canonicalHost = host.replace(/^www\./, '');
+    const canonicalURL = `https://${canonicalHost}${req.originalUrl}`;
+    
+    console.log(`🔀 Redirecting: ${protocol}://${host}${req.originalUrl} → ${canonicalURL}`);
+    return res.redirect(301, canonicalURL);
+  }
+  
+  next();
+});
+
 app.use(express.static("public"));
 
 // Apply queue middleware to all heavy endpoints
